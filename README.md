@@ -8,6 +8,7 @@
 </p>
 
 **GitHub Repo:** [https://github.com/Afinnn954/Binance-Futures-BOT](https://github.com/Afinnn954/Binance-Futures-BOT)
+**Credit/Support:** Telegram [t.me/JoestarMojo](https://t.me/JoestarMojo)
 
 ---
 
@@ -15,7 +16,7 @@
 <details>
 <summary><strong>🇬🇧 English Version (Click to Expand)</strong></summary>
 
-This bot is designed for **automated trading** 📈 on the **Binance Futures** platform based on signals from technical indicators (RSI, EMA, Bollinger Bands) and is fully managed via **Telegram** 📱. It offers various trading modes, risk management features, and real-time notifications to help you automate your trading strategies.
+This bot is designed for **automated trading** 📈 on the **Binance Futures** platform based on signals from technical indicators (RSI, EMA, Bollinger Bands) and is fully managed via **Telegram** 📱. It offers various trading modes, risk management features, dynamic pair selection, and real-time notifications to help you automate your trading strategies.
 
 ## ✨ Key Features (Detailed) ✨
 
@@ -23,47 +24,39 @@ This bot is designed for **automated trading** 📈 on the **Binance Futures** p
     *   **RSI + Candle Pattern:**
         *   🟢 **LONG:** RSI below oversold level (e.g., 30) AND the last candle is green.
         *   🔴 **SHORT:** RSI above overbought level (e.g., 70) AND the last candle is red.
-    *   **EMA Crossover:** Signals based on the crossover between a short-period Exponential Moving Average (e.g., EMA 20) and a long-period EMA (e.g., EMA 50).
-    *   **Bollinger Bands Breakout:** Detects potential trend reversals or continuations when the price breaks out of the upper or lower Bollinger Bands.
+    *   **EMA Crossover:** Signals based on the crossover and alignment between a short-period Exponential Moving Average (e.g., EMA 20) and a long-period EMA (e.g., EMA 50) relative to the price.
+    *   **Bollinger Bands Breakout:** Detects potential trend reversals or volatility confirmations when the price breaks out of the upper or lower Bollinger Bands.
+    *   **Signal Strength Logic:** Signals are evaluated based on the cumulative strength from various indicator conditions to trigger a trade.
 
-2.  💼 **Position Management**
-    *   **Automatic Position Sizing:** Calculated based on a percentage of the available account balance and the leverage used.
-    *   **Take Profit (TP):** `TAKE_PROFIT_MARKET` orders are automatically placed at a predefined profit percentage from the entry price (e.g., +0.6% for *Safe* mode).
-    *   **Stop Loss (SL):** `STOP_MARKET` orders are automatically placed at a predefined loss percentage from the entry price (e.g., -0.3% for *Safe* mode).
-    *   **Hedge Mode:** Supports opening simultaneous LONG and SHORT positions for the same trading pair (`positionSide='LONG'` or `'SHORT'`).
+2.  🆕 **🔍 Dynamic Pair Selection (NEW!)**
+    *   🌊 **Automated Scanning:** Periodically scans a user-defined watchlist of coins (`dynamic_watchlist_symbols`).
+    *   💧 **Liquidity Filter:** Considers only coins meeting a minimum 24-hour trading volume (`min_24h_volume_usdt_for_scan`).
+    *   🎯 **Signal-Based Selection:** Selects a configurable number of top pairs (`max_active_dynamic_pairs`) exhibiting the strongest trading signals.
+    *   🔄 **Dynamic Trading List:** The list of actively traded pairs (`trading_pairs`) can change automatically based on scan results, allowing the bot to adapt to market opportunities.
 
-3.  🛡️ **Risk Management**
-    *   **Daily Profit Target:** The bot will stop opening new trades if the daily profit percentage target is reached. 🎯
-    *   **Daily Loss Limit:** The bot will stop opening new trades if the daily loss percentage limit is reached. 🛑
+3.  💼 **Position Management**
+    *   **Automatic Position Sizing:** Can be calculated based on a percentage of the available account balance (`position_size_percentage`) or a fixed USDT amount (`position_size_usdt`).
+    *   **Take Profit (TP):** `TAKE_PROFIT_MARKET` orders are automatically placed at a predefined profit percentage.
+    *   **Stop Loss (SL):** `STOP_MARKET` orders are automatically placed at a predefined loss percentage.
+    *   **Hedge Mode:** Supports opening simultaneous LONG and SHORT positions for the same trading pair if your Binance account is set to Hedge Mode.
+
+4.  🛡️ **Risk Management**
+    *   **Daily Profit Target:** The bot stops opening new trades if the daily profit percentage target is reached. 🎯
+    *   **Daily Loss Limit:** The bot stops opening new trades if the daily loss percentage limit is reached. 🛑
     *   **Flexible Leverage:** Leverage can be configured for each trading mode or set manually.
-    *   **Percentage Position Size:** Controls risk per trade by defining the position size as a percentage of the total balance.
+    *   **Max Daily Trades:** Limits the number of trades per day to prevent over-trading.
 
-4.  ⚙️ **Trading Modes (Default & Customizable)**
-    *   **Safe 🐢:**
-        *   Leverage: 5x
-        *   Take Profit: 0.6%
-        *   Stop Loss: 0.3%
-        *   Position Size: 10% of balance
-        *   Max Daily Trades: 10
-    *   **Standard 🚶‍♂️:**
-        *   Leverage: 10x
-        *   Take Profit: 1.0%
-        *   Stop Loss: 0.5%
-        *   Position Size: 15% of balance
-        *   Max Daily Trades: 15
-    *   **Aggressive 🚀:**
-        *   Leverage: 20x
-        *   Take Profit: 1.5%
-        *   Stop Loss: 0.7%
-        *   Position Size: 20% of balance
-        *   Max Daily Trades: 20
-    *(All these trading mode parameters and more can be further customized via configuration or Telegram commands).*
+5.  ⚙️ **Trading Modes (Default & Customizable)**
+    *   **Safe 🐢:** Lower leverage, tighter TP/SL, smaller position size.
+    *   **Standard 🚶‍♂️:** Balanced risk/reward parameters.
+    *   **Aggressive 🚀:** Higher leverage, wider TP/SL, larger position size.
+    *(All trading mode parameters are defined in `TRADING_MODES` and can be customized. The bot applies these settings when a mode is selected).*
 
-5.  🔔 **Telegram Monitoring & Notifications**
-    *   **Real-time Trade Notifications:** Instant alerts for new position openings, position closings (due to TP, SL, or manual), and any errors encountered.
-    *   **Daily Profit/Loss (PnL) Tracking:** Daily statistical reports sent via Telegram, including total PnL, win rate, etc. 💰
-    *   **On-Demand Indicator Analysis:** Get the latest technical indicator analysis for a specific trading pair using the `/indicators [symbol]` command.
-    *   **Bot Status & Configuration:** Monitor bot status and view/change configurations directly from Telegram.
+6.  🔔 **Telegram Monitoring & Notifications**
+    *   **Real-time Trade Notifications:** Instant alerts for new position openings, closings (TP, SL, manual), dynamic pair updates, and errors.
+    *   **Daily PnL Tracking:** Daily statistical reports including total PnL, win rate, etc. 💰
+    *   **On-Demand Analysis:** Get technical indicator values (`/indicators`) and scanned pair candidates (`/scannedpairs` 🆕).
+    *   **Full Bot Control:** Status, configuration, start/stop, manage pairs, and more, directly from Telegram.
 
 ---
 
@@ -72,11 +65,11 @@ This bot is designed for **automated trading** 📈 on the **Binance Futures** p
 1.  **Python 3.8+** 🐍
 2.  **Binance Account:**
     *   API Key and Secret Key for your **Futures** account.
-    *   Ensure the API Key has "Enable Futures" permission.
-    *   For security, consider enabling IP restrictions for your API Key if possible.
+    *   Ensure "Enable Futures" permission is active for the API Key.
+    *   Consider IP restrictions for API Key security.
 3.  **Telegram Account:**
-    *   Create a new Telegram bot via [@BotFather](https://t.me/BotFather) to get your **Bot Token**. 🤖
-    *   Obtain your Telegram **User ID** (e.g., via a bot like [@userinfobot](https://t.me/userinfobot)). This is required for admin authorization. 🆔
+    *   Create a Telegram bot via [@BotFather](https://t.me/BotFather) to get your **Bot Token**. 🤖
+    *   Obtain your Telegram **User ID** (e.g., via [@userinfobot](https://t.me/userinfobot)) for admin authorization. 🆔
 
 ---
 
@@ -88,16 +81,15 @@ This bot is designed for **automated trading** 📈 on the **Binance Futures** p
     cd Binance-Futures-BOT
     ```
 
-2.  **Create a Virtual Environment (Highly Recommended):**
+2.  **Create & Activate Virtual Environment (Recommended):**
     ```bash
     python -m venv venv
+    # Windows: venv\Scripts\activate
+    # macOS/Linux: source venv/bin/activate
     ```
-    Activate the virtual environment:
-    *   Windows: `venv\Scripts\activate`
-    *   macOS/Linux: `source venv/bin/activate`
 
 3.  **Install Dependencies:**
-    Ensure you have the `requirements.txt` file in the directory, then run:
+    Ensure `requirements.txt` exists and contains necessary packages (e.g., `python-telegram-bot`, `requests`, `numpy`, `pandas`, `pandas-ta`). Then run:
     ```bash
     pip install -r requirements.txt
     ```
@@ -106,115 +98,160 @@ This bot is designed for **automated trading** 📈 on the **Binance Futures** p
 
 ## 📝 Initial Configuration
 
-Open the `binance-futures-bot.py` script file and edit the following configuration sections:
+Open the `Futures.py` script (or your main bot file) and edit these sections:
 
-1.  **Telegram Bot Configuration:**
+1.  **Telegram & Admin Configuration:**
     ```python
     # ======== BOT CONFIGURATION ========
     TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
-    ADMIN_USER_IDS = [YOUR_TELEGRAM_USER_ID_HERE] # e.g., [123456789] or [123, 456]
+    ADMIN_USER_IDS = [YOUR_TELEGRAM_USER_ID_HERE] # e.g., [123456789]
     # ==================================
     ```
 
 2.  **Binance API Configuration:**
     ```python
-    # Binance API configuration
-    BINANCE_API_KEY = "YOUR_BINANCE_API_KEY_HERE"
-    BINANCE_API_SECRET = "YOUR_BINANCE_API_SECRET_HERE"
+    BINANCE_API_KEY = "YOUR_BINANCE_FUTURES_API_KEY"
+    BINANCE_API_SECRET = "YOUR_BINANCE_FUTURES_API_SECRET"
     ```
 
-3.  **Initial Bot Settings (Optional, can be changed via Telegram):**
-    In the `CONFIG` dictionary:
+3.  **Main Bot Settings (`CONFIG` dictionary):**
     ```python
     CONFIG = {
-        # ...
-        "trading_pairs": ["BTCUSDT", "ETHUSDT"], # Default trading pairs
-        "trading_mode": "safe",     # Initial trading mode
-        "use_testnet": True,        # True for Testnet, False for Production (Live)
-        "use_real_trading": False,  # True for real trading (USE WITH EXTREME CAUTION!)
-        "daily_profit_target": 5.0, # Default daily profit target (%)
-        "daily_loss_limit": 3.0,    # Default daily loss limit (%)
-        # ...
+        "api_key": BINANCE_API_KEY,
+        "api_secret": BINANCE_API_SECRET,
+        
+        "trading_pairs": ["BTCUSDT", "ETHUSDT"], # Initial/static pairs if dynamic selection is OFF
+                                                 # This list is OVERWRITTEN if dynamic_pair_selection is True.
+        
+        # --- DYNAMIC PAIR SELECTION (NEW!) ---
+        "dynamic_pair_selection": True,        # Set to True to enable this feature.
+        "dynamic_watchlist_symbols": [         # Coins the bot will scan if dynamic selection is active.
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", 
+            "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT", "LINKUSDT", "TRXUSDT", 
+            # Add more popular and liquid USDT perpetual pairs
+        ],
+        "max_active_dynamic_pairs": 3,         # Max number of dynamically selected pairs to trade concurrently.
+        "min_24h_volume_usdt_for_scan": 10000000, # Minimum 24h volume in USDT for a coin to be considered (e.g., 10M USDT).
+        "dynamic_scan_interval_seconds": 300,  # How often to scan for dynamic pairs (e.g., 300s = 5 mins).
+        "api_call_delay_seconds": 0.5,         # Small delay between API calls during scanning (prevents rate limits).
+
+        # --- Position & Risk ---
+        "position_size_usdt": 100,             # Default USDT amount if use_percentage=False.
+        "use_percentage": True,                # True to use percentage of balance for position size.
+        "position_size_percentage": 5.0,       # Percentage of available balance per trade (e.g., 5%).
+        "take_profit": 0.6,                    # Default Take Profit %.
+        "stop_loss": 0.3,                      # Default Stop Loss %.
+        "leverage": 10,                        # Default leverage.
+
+        # --- Operational ---
+        "trading_enabled": False,              # Bot trading status on start (control via /starttrade).
+        "trading_mode": "standard",            # Default trading mode ("safe", "standard", "aggressive").
+        "max_daily_trades": 15,                # Max trades per day.
+        "signal_check_interval": 30,           # Interval (seconds) to check signals for active pairs.
+        "use_testnet": False,                  # True for Binance Testnet, False for Live Production.
+        "use_real_trading": False,             # CRITICAL: False for simulation, True for real funds.
+        "daily_profit_target": 5.0,            # Daily profit target %.
+        "daily_loss_limit": 3.0,               # Daily loss limit %.
+        "hedge_mode": True,                    # True if your Binance Futures account is in Hedge Mode.
+        "post_trade_delay_seconds": 2,         # Delay (seconds) after a trade before checking signals again.
     }
     ```
+
+4.  **Technical Indicator Settings (`INDICATOR_SETTINGS` dictionary):**
+    ```python
+    INDICATOR_SETTINGS = {
+        "rsi_period": 14, "rsi_oversold": 30, "rsi_overbought": 70,
+        "ema_short": 20, "ema_long": 50,
+        "bb_period": 20, "bb_std": 2.0,
+        "candle_timeframe": "5m",              # Candlestick timeframe (e.g., "1m", "5m", "1h").
+        "signal_strength_threshold": 30        # Minimum signal strength required to open a trade.
+    }
+    ```
+
+5.  **Trading Modes (`TRADING_MODES` dictionary):**
+    Review and customize the predefined "safe", "standard", and "aggressive" modes, or add your own. Each mode defines leverage, TP/SL percentages, position size percentage, and max daily trades.
 
 ---
 
 ## ▶️ How to Use
 
 1.  **Run the Bot:**
-    From your terminal or command prompt (ensure the virtual environment is active):
+    From your terminal (with virtual environment active):
     ```bash
-    python binance-futures-bot.py
+    python Futures.py  # Or your main bot script name
     ```
-    The bot will start running, and you'll see logs in the console. It will connect to Telegram.
+    The bot will start, connect to Binance and Telegram. Monitor console logs.
 
-2.  **Interact with the Bot on Telegram:**
-    Open a chat with your bot on Telegram. Only users whose `ADMIN_USER_IDS` are listed can use the following commands:
+2.  **Interact via Telegram:**
+    Only `ADMIN_USER_IDS` can use these commands.
 
-    **General Commands:**
-    *   `/start` 👋: Initiates interaction with the bot and displays the main menu.
-    *   `/help` ℹ️: Displays the list of available commands and their functions.
-    *   `/status` 📊: Shows the current status of the bot.
-    *   `/config` ⚙️: Displays the current bot configuration.
-    *   `/set [parameter] [value]` 🔧: Changes a configuration parameter.
-        *   Example: `/set leverage 15`
-    *   `/trades` 📜: Shows the history of the last few trades.
-    *   `/stats` 📈: Displays daily trading statistics.
-    *   `/balance` 💰: Shows your Binance Futures account balance.
-    *   `/positions` 📂: Displays all current open positions.
-    *   `/indicators [symbol]` 📉: Shows the latest technical indicator values.
+    **General & Status:**
+    *   `/start` 👋: Main menu.
+    *   `/help` ℹ️: List of commands.
+    *   `/status` 📊: Bot's current operational status.
+    *   `/config` ⚙️: Current bot configuration.
+    *   `/stats` 📈: Daily trading statistics.
+    *   `/balance` 💰: Binance Futures account balance.
+    *   `/positions` 📂: Current open positions.
+    *   `/trades` 📜: Recent trade history.
+    *   `/indicators <SYMBOL>` 📉: Technical indicators for a symbol (e.g., `/indicators BTCUSDT`).
 
-    **Trading Commands:**
-    *   `/starttrade` ▶️: Starts the automated trading process.
-    *   `/stoptrade` ⏹️: Stops the automated trading process.
-    *   `/closeall` ❌: Closes all current open positions (use with caution).
+    **Trading Control:**
+    *   `/starttrade` ▶️: Starts automated trading.
+    *   `/stoptrade` ⏹️: Stops automated trading.
+    *   `/closeall` ❌: Closes all open positions (use cautiously!).
 
-    **Advanced Settings Commands:**
-    *   `/setleverage [value]` 🔩: Sets the default leverage.
-    *   `/setmode [mode]` 🔄: Sets the trading mode (`safe`, `standard`, `aggressive`).
-    *   `/addpair [symbol]` ➕: Adds a trading pair.
-    *   `/removepair [symbol]` ➖: Removes a trading pair.
-    *   `/setprofit [target_profit] [loss_limit]` 🎯: Sets the daily profit target (%) and loss limit (%).
+    **Settings & Configuration:**
+    *   `/set <param> <value>` 🔧: General config change (e.g., `/set leverage 15`).
+    *   `/setleverage <val>` 🔩, `/setmode <mode>`, `/addpair <sym>`, `/removepair <sym>`, `/setprofit <tp%> <sl%>` 🎯.
 
-    **Real Trading & Testnet Commands:**
-    *   `/enablereal` 💵: Enables real trading. **WARNING: Uses real funds!**
-    *   `/disablereal` 🎮: Disables real trading (returns to simulation mode).
-    *   `/toggletestnet` 🧪: Switches between Testnet and Production (Live) API.
-    *   `/testapi` 📡: Tests the connection to the Binance Futures API.
+    🆕 **Dynamic Pair Selection Commands:**
+    *   `/toggledynamic` (To be implemented): Toggles `dynamic_pair_selection` True/False.
+    *   `/watchlist <add|remove|list> [SYMBOL]` (To be implemented): Manages `dynamic_watchlist_symbols`.
+    *   `/setdynamicpairs <count>` (To be implemented): Sets `max_active_dynamic_pairs`.
+    *   `/setminvolume <usdt_amount>` (To be implemented): Sets `min_24h_volume_usdt_for_scan`.
+    *   `/scannedpairs` 🕵️: Displays the last set of dynamically scanned candidate pairs and their signal strength.
+
+    **Real Trading & API:**
+    *   `/enablereal` 💵: **Activates real trading. USE WITH EXTREME CAUTION!**
+    *   `/disablereal` 🎮: Deactivates real trading (simulation mode).
+    *   `/toggletestnet` 🧪: Switches between Live and Testnet APIs.
+    *   `/testapi` 📡: Tests Binance API connection.
 
 ---
 
 ## 📂 Bot Structure
 
-*   `BinanceFuturesAPI`: Class responsible for all interactions with the Binance Futures API.
-*   `TechnicalAnalysis`: Class that calculates various technical indicators (`pandas_ta`).
-*   `TradingBot`: Core class containing trading logic, status management, signal processing, and order placement.
-*   `TelegramBotHandler`: Class that handles all user interactions via Telegram and sends notifications.
-*   `main()`: Main function to initialize all bot components and run the Telegram loop.
+*   `BinanceFuturesAPI`: Handles Binance Futures API interactions.
+*   `TechnicalAnalysis`: Calculates technical indicators using `pandas_ta`.
+*   `TradingBot`: Core trading logic, signal processing, order management, dynamic pair scanning.
+*   `TelegramBotHandler`: Manages Telegram interactions and notifications.
+*   `main()`: Initializes and runs the bot.
 
 ---
 
 ## ⚠️ Important Notes & Risk Warning ⚠️
 
-*   **HIGH RISK:** Trading Cryptocurrency Futures is highly speculative and carries a high level of risk. You can lose your entire capital. This bot is a tool and **does not guarantee profits**. Use at your own risk.
-*   **NOT FINANCIAL ADVICE:** This is not financial advice. Do Your Own Research (DYOR).
-*   **API KEY SECURITY:** Keep your API Key and Secret Key confidential. Never share them.
-*   **TEST ON TESTNET:** Before using real funds, conduct extensive testing on the Binance **Testnet**.
-*   **MONITOR ACTIVELY:** Even though automated, monitor its performance, especially when real funds are involved.
-*   **FURTHER DEVELOPMENT:** This script is a functional base. You are free to modify and enhance it.
+*   **HIGH RISK:** Cryptocurrency Futures trading is speculative and carries substantial risk. You can lose your entire capital. This bot is a tool and **does not guarantee profits**. Use at your own discretion and risk.
+*   **NOT FINANCIAL ADVICE:** This content is for informational purposes only and should not be construed as financial advice. Always Do Your Own Research (DYOR).
+*   **API KEY SECURITY:** Protect your API Key and Secret Key. Never share them or commit them to public repositories.
+*   **TEST THOROUGHLY:** Before deploying with real funds, extensively test the bot on Binance **Testnet** and/or in simulation mode (`use_real_trading = False`).
+*   **MONITOR PERFORMANCE:** Even when automated, actively monitor the bot's performance and market conditions.
+*   **DYNAMIC PAIR RISKS:** While dynamic pair selection can find opportunities, it might also pick highly volatile or less understood pairs if your watchlist and liquidity filters are not set carefully.
 
 ---
 
 ## 📜 License
 
-This script is distributed under the MIT License.
-This script is provided "AS IS" without warranty of any kind. The user assumes full responsibility for the use of this script.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
+This script is provided "AS IS", without warranty of any kind. The user assumes all responsibility for its use.
 
 ---
 
 ⭐ If you find this bot useful, please consider starring this repository! ⭐
 [https://github.com/Afinnn954/Binance-Futures-BOT](https://github.com/Afinnn954/Binance-Futures-BOT)
+
+**Credit/Support:** Telegram [t.me/JoestarMojo](https://t.me/JoestarMojo)
 
 </details>
 
@@ -222,10 +259,10 @@ This script is provided "AS IS" without warranty of any kind. The user assumes f
 ---
 
 <!-- INDONESIAN SECTION -->
-<details open> <!-- `open` makes this section expanded by default -->
+<details open> <!-- `open` membuat bagian ini terbuka secara default -->
 <summary><strong>🇮🇩 Versi Bahasa Indonesia (Klik untuk Memperluas/Menyempitkan)</strong></summary>
 
-Bot ini dirancang untuk melakukan **trading otomatis** 📈 pada platform **Binance Futures** berdasarkan sinyal dari indikator teknikal (RSI, EMA, Bollinger Bands) dan dikelola sepenuhnya melalui **Telegram** 📱. Bot ini menawarkan berbagai mode trading, manajemen risiko, dan notifikasi real-time untuk membantu Anda mengotomatiskan strategi trading Anda.
+Bot ini dirancang untuk **trading otomatis** 📈 pada platform **Binance Futures** berdasarkan sinyal dari indikator teknikal (RSI, EMA, Bollinger Bands) dan dikelola sepenuhnya melalui **Telegram** 📱. Bot ini menawarkan berbagai mode trading, manajemen risiko, pemilihan pair dinamis, dan notifikasi real-time untuk membantu Anda mengotomatiskan strategi trading Anda.
 
 ## ✨ Fitur Utama (Detail) ✨
 
@@ -233,47 +270,39 @@ Bot ini dirancang untuk melakukan **trading otomatis** 📈 pada platform **Bina
     *   **RSI + Pola Candle:**
         *   🟢 **LONG:** RSI di bawah level oversold (misal, 30) DAN candle terakhir berwarna hijau.
         *   🔴 **SHORT:** RSI di atas level overbought (misal, 70) DAN candle terakhir berwarna merah.
-    *   **EMA Crossover:** Sinyal berdasarkan persilangan antara Exponential Moving Average periode pendek (misal, EMA 20) dan periode panjang (misal, EMA 50).
-    *   **Bollinger Bands Breakout:** Deteksi potensi pembalikan atau kelanjutan tren ketika harga menembus batas atas atau bawah Bollinger Bands.
+    *   **EMA Crossover:** Sinyal berdasarkan persilangan dan keselarasan antara Exponential Moving Average periode pendek (misal, EMA 20) dan periode panjang (misal, EMA 50) relatif terhadap harga.
+    *   **Bollinger Bands Breakout:** Mendeteksi potensi pembalikan tren atau konfirmasi volatilitas ketika harga menembus batas atas atau bawah Bollinger Bands.
+    *   **Logika Kekuatan Sinyal:** Sinyal dievaluasi berdasarkan akumulasi kekuatan dari berbagai kondisi indikator untuk memicu trading.
 
-2.  💼 **Manajemen Posisi**
-    *   **Ukuran Posisi Otomatis:** Dihitung berdasarkan persentase dari saldo akun yang tersedia dan leverage yang digunakan.
-    *   **Take Profit (TP):** Order `TAKE_PROFIT_MARKET` ditempatkan secara otomatis pada persentase keuntungan yang ditentukan dari harga masuk (misal, +0.6% untuk mode *Safe*).
-    *   **Stop Loss (SL):** Order `STOP_MARKET` ditempatkan secara otomatis pada persentase kerugian yang ditentukan dari harga masuk (misal, -0.3% untuk mode *Safe*).
-    *   **Hedge Mode:** Mendukung pembukaan posisi LONG dan SHORT secara bersamaan untuk pasangan trading yang sama (`positionSide='LONG'` atau `'SHORT'`).
+2.  🆕 **🔍 Pemilihan Pair Dinamis (BARU!)**
+    *   🌊 **Pemindaian Otomatis:** Secara periodik memindai daftar pantau koin yang ditentukan pengguna (`dynamic_watchlist_symbols`).
+    *   💧 **Filter Likuiditas:** Hanya mempertimbangkan koin yang memenuhi volume trading minimum 24 jam (`min_24h_volume_usdt_for_scan`).
+    *   🎯 **Seleksi Berbasis Sinyal:** Memilih sejumlah pair teratas (dapat dikonfigurasi, `max_active_dynamic_pairs`) yang menunjukkan sinyal trading terkuat.
+    *   🔄 **Daftar Trading Dinamis:** Daftar pair yang aktif ditradingkan (`trading_pairs`) dapat berubah secara otomatis berdasarkan hasil pemindaian, memungkinkan bot beradaptasi dengan peluang pasar.
 
-3.  🛡️ **Manajemen Risiko**
+3.  💼 **Manajemen Posisi**
+    *   **Ukuran Posisi Otomatis:** Dapat dihitung berdasarkan persentase dari saldo akun yang tersedia (`position_size_percentage`) atau jumlah USDT tetap (`position_size_usdt`).
+    *   **Take Profit (TP):** Order `TAKE_PROFIT_MARKET` ditempatkan secara otomatis pada persentase keuntungan yang telah ditentukan.
+    *   **Stop Loss (SL):** Order `STOP_MARKET` ditempatkan secara otomatis pada persentase kerugian yang telah ditentukan.
+    *   **Hedge Mode:** Mendukung pembukaan posisi LONG dan SHORT secara bersamaan untuk pasangan trading yang sama jika akun Binance Anda diatur ke Mode Hedge.
+
+4.  🛡️ **Manajemen Risiko**
     *   **Target Profit Harian:** Bot akan berhenti membuka trading baru jika target persentase keuntungan harian tercapai. 🎯
     *   **Batas Kerugian Harian:** Bot akan berhenti membuka trading baru jika batas persentase kerugian harian tercapai. 🛑
     *   **Leverage Fleksibel:** Leverage dapat dikonfigurasi untuk setiap mode trading atau diatur secara manual.
-    *   **Ukuran Posisi Persentase:** Mengontrol risiko per trading dengan menentukan ukuran posisi sebagai persentase dari total saldo.
+    *   **Maks. Trading Harian:** Membatasi jumlah trading per hari untuk mencegah over-trading.
 
-4.  ⚙️ **Mode Trading (Default & Dapat Disesuaikan)**
-    *   **Safe 🐢:**
-        *   Leverage: 5x
-        *   Take Profit: 0.6%
-        *   Stop Loss: 0.3%
-        *   Ukuran Posisi: 10% dari saldo
-        *   Maks. Trading Harian: 10
-    *   **Standard 🚶‍♂️:**
-        *   Leverage: 10x
-        *   Take Profit: 1.0%
-        *   Stop Loss: 0.5%
-        *   Ukuran Posisi: 15% dari saldo
-        *   Maks. Trading Harian: 15
-    *   **Aggressive 🚀:**
-        *   Leverage: 20x
-        *   Take Profit: 1.5%
-        *   Stop Loss: 0.7%
-        *   Ukuran Posisi: 20% dari saldo
-        *   Maks. Trading Harian: 20
-    *(Semua parameter mode trading ini dan lainnya dapat disesuaikan lebih lanjut melalui konfigurasi atau perintah Telegram).*
+5.  ⚙️ **Mode Trading (Default & Dapat Disesuaikan)**
+    *   **Safe 🐢:** Leverage lebih rendah, TP/SL lebih ketat, ukuran posisi lebih kecil.
+    *   **Standard 🚶‍♂️:** Parameter risiko/imbalan yang seimbang.
+    *   **Aggressive 🚀:** Leverage lebih tinggi, TP/SL lebih lebar, ukuran posisi lebih besar.
+    *(Semua parameter mode trading didefinisikan dalam `TRADING_MODES` dan dapat disesuaikan. Bot menerapkan pengaturan ini saat mode dipilih).*
 
-5.  🔔 **Pemantauan & Notifikasi Telegram**
-    *   **Notifikasi Trading Real-time:** Pemberitahuan instan untuk pembukaan posisi baru, penutupan posisi (karena TP, SL, atau manual), dan error yang terjadi.
-    *   **Pelacakan Profit/Loss (PnL) Harian:** Laporan statistik harian yang dikirim melalui Telegram, termasuk total PnL, win rate, dll. 💰
-    *   **Analisis Indikator Sesuai Permintaan:** Dapatkan analisis indikator teknikal terbaru untuk pasangan trading tertentu menggunakan perintah `/indicators [simbol]`.
-    *   **Status Bot & Konfigurasi:** Pantau status bot dan lihat/ubah konfigurasi langsung dari Telegram.
+6.  🔔 **Pemantauan & Notifikasi Telegram**
+    *   **Notifikasi Trading Real-time:** Peringatan instan untuk pembukaan posisi baru, penutupan (TP, SL, manual), pembaruan pair dinamis, dan error.
+    *   **Pelacakan PnL Harian:** Laporan statistik harian termasuk total PnL, win rate, dll. 💰
+    *   **Analisis Sesuai Permintaan:** Dapatkan nilai indikator teknikal (`/indicators`) dan kandidat pair hasil scan (`/scannedpairs` 🆕).
+    *   **Kontrol Bot Penuh:** Status, konfigurasi, start/stop, kelola pair, dan lainnya, langsung dari Telegram.
 
 ---
 
@@ -281,12 +310,12 @@ Bot ini dirancang untuk melakukan **trading otomatis** 📈 pada platform **Bina
 
 1.  **Python 3.8+** 🐍
 2.  **Akun Binance:**
-    *   API Key dan Secret Key untuk akun **Futures**.
-    *   Pastikan API Key memiliki izin untuk "Enable Futures".
-    *   Untuk keamanan, pertimbangkan untuk mengaktifkan restriksi IP untuk API Key Anda jika memungkinkan.
+    *   API Key dan Secret Key untuk akun **Futures** Anda.
+    *   Pastikan izin "Enable Futures" aktif untuk API Key tersebut.
+    *   Pertimbangkan restriksi IP untuk keamanan API Key.
 3.  **Akun Telegram:**
-    *   Buat bot Telegram baru melalui [@BotFather](https://t.me/BotFather) untuk mendapatkan **Bot Token**. 🤖
-    *   Dapatkan **User ID** Telegram Anda (misalnya, melalui bot seperti [@userinfobot](https://t.me/userinfobot)). Ini diperlukan untuk otorisasi admin. 🆔
+    *   Buat bot Telegram melalui [@BotFather](https://t.me/BotFather) untuk mendapatkan **Bot Token**. 🤖
+    *   Dapatkan **User ID** Telegram Anda (misal, melalui [@userinfobot](https://t.me/userinfobot)) untuk otorisasi admin. 🆔
 
 ---
 
@@ -298,16 +327,15 @@ Bot ini dirancang untuk melakukan **trading otomatis** 📈 pada platform **Bina
     cd Binance-Futures-BOT
     ```
 
-2.  **Buat Lingkungan Virtual (Sangat Disarankan):**
+2.  **Buat & Aktifkan Lingkungan Virtual (Sangat Disarankan):**
     ```bash
     python -m venv venv
+    # Windows: venv\Scripts\activate
+    # macOS/Linux: source venv/bin/activate
     ```
-    Aktifkan lingkungan virtual:
-    *   Windows: `venv\Scripts\activate`
-    *   macOS/Linux: `source venv/bin/activate`
 
 3.  **Instal Dependensi:**
-    Pastikan Anda memiliki file `requirements.txt` dalam direktori, lalu jalankan:
+    Pastikan file `requirements.txt` ada dan berisi paket yang diperlukan (misal, `python-telegram-bot`, `requests`, `numpy`, `pandas`, `pandas-ta`). Lalu jalankan:
     ```bash
     pip install -r requirements.txt
     ```
@@ -316,114 +344,159 @@ Bot ini dirancang untuk melakukan **trading otomatis** 📈 pada platform **Bina
 
 ## 📝 Konfigurasi Awal
 
-Buka file skrip `binance-futures-bot.py` dan edit bagian konfigurasi berikut:
+Buka file skrip `Futures.py` (atau file bot utama Anda) dan edit bagian-bagian ini:
 
-1.  **Konfigurasi Bot Telegram:**
+1.  **Konfigurasi Telegram & Admin:**
     ```python
     # ======== BOT CONFIGURATION ========
-    TELEGRAM_BOT_TOKEN = "MASUKKAN_BOT_TOKEN_ANDA_DISINI"
-    ADMIN_USER_IDS = [MASUKKAN_USER_ID_TELEGRAM_ANDA] # misal: [123456789] atau [123, 456]
+    TELEGRAM_BOT_TOKEN = "MASUKKAN_TOKEN_BOT_TELEGRAM_ANDA"
+    ADMIN_USER_IDS = [MASUKKAN_USER_ID_TELEGRAM_ANDA] # misal: [123456789]
     # ==================================
     ```
 
 2.  **Konfigurasi API Binance:**
     ```python
-    # Binance API configuration
-    BINANCE_API_KEY = "MASUKKAN_API_KEY_BINANCE_ANDA"
-    BINANCE_API_SECRET = "MASUKKAN_API_SECRET_BINANCE_ANDA"
+    BINANCE_API_KEY = "MASUKKAN_API_KEY_BINANCE_FUTURES_ANDA"
+    BINANCE_API_SECRET = "MASUKKAN_API_SECRET_BINANCE_FUTURES_ANDA"
     ```
 
-3.  **Pengaturan Awal Bot (Opsional, dapat diubah via Telegram):**
-    Dalam kamus `CONFIG`:
+3.  **Pengaturan Utama Bot (Kamus `CONFIG`):**
     ```python
     CONFIG = {
-        # ...
-        "trading_pairs": ["BTCUSDT", "ETHUSDT"], # Pasangan default
-        "trading_mode": "safe",     # Mode trading awal
-        "use_testnet": True,        # True untuk Testnet, False untuk Production (Live)
-        "use_real_trading": False,  # True untuk trading riil (HATI-HATI!)
-        "daily_profit_target": 5.0, # Target profit harian default (%)
-        "daily_loss_limit": 3.0,    # Batas kerugian harian default (%)
-        # ...
+        "api_key": BINANCE_API_KEY,
+        "api_secret": BINANCE_API_SECRET,
+        
+        "trading_pairs": ["BTCUSDT", "ETHUSDT"], # Pair awal/statis jika pemilihan dinamis NONAKTIF.
+                                                 # Daftar ini akan DIGANTI jika dynamic_pair_selection = True.
+        
+        # --- PEMILIHAN PAIR DINAMIS (BARU!) ---
+        "dynamic_pair_selection": True,        # Atur ke True untuk mengaktifkan fitur ini.
+        "dynamic_watchlist_symbols": [         # Daftar koin yang akan dipindai bot jika dinamis aktif.
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", 
+            "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT", "LINKUSDT", "TRXUSDT", 
+            # Tambahkan lebih banyak koin populer dan likuid lainnya
+        ],
+        "max_active_dynamic_pairs": 3,         # Jumlah maksimal pair dinamis yang akan ditradingkan bersamaan.
+        "min_24h_volume_usdt_for_scan": 10000000, # Volume 24 jam minimum dalam USDT agar koin dipertimbangkan (misal 10 Juta USDT).
+        "dynamic_scan_interval_seconds": 300,  # Seberapa sering memindai pair dinamis (misal 300 detik = 5 menit).
+        "api_call_delay_seconds": 0.5,         # Jeda kecil antar panggilan API saat memindai (mencegah rate limit).
+
+        # --- Posisi & Risiko ---
+        "position_size_usdt": 100,             # Jumlah USDT default jika use_percentage=False.
+        "use_percentage": True,                # True untuk menggunakan persentase balance.
+        "position_size_percentage": 5.0,       # Persentase balance yang digunakan per trade (misal 5%).
+        "take_profit": 0.6,                    # Default Take Profit %.
+        "stop_loss": 0.3,                      # Default Stop Loss %.
+        "leverage": 10,                        # Default leverage.
+
+        # --- Operasional ---
+        "trading_enabled": False,              # Status trading bot saat mulai (kontrol via /starttrade).
+        "trading_mode": "standard",            # Mode trading default ("safe", "standard", "aggressive").
+        "max_daily_trades": 15,                # Maksimum trade per hari.
+        "signal_check_interval": 30,           # Interval (detik) pengecekan sinyal untuk pair aktif.
+        "use_testnet": False,                  # True untuk Binance Testnet, False untuk Live/Produksi.
+        "use_real_trading": False,             # KRUSIAL: False untuk simulasi, True untuk dana riil.
+        "daily_profit_target": 5.0,            # Target profit harian %.
+        "daily_loss_limit": 3.0,               # Batas kerugian harian %.
+        "hedge_mode": True,                    # True jika akun Binance Futures Anda dalam Mode Hedge.
+        "post_trade_delay_seconds": 2,         # Jeda (detik) setelah trade sebelum cek sinyal lagi.
     }
     ```
+
+4.  **Pengaturan Indikator Teknikal (Kamus `INDICATOR_SETTINGS`):**
+    ```python
+    INDICATOR_SETTINGS = {
+        "rsi_period": 14, "rsi_oversold": 30, "rsi_overbought": 70,
+        "ema_short": 20, "ema_long": 50,
+        "bb_period": 20, "bb_std": 2.0,
+        "candle_timeframe": "5m",              # Timeframe candlestick (misal "1m", "5m", "1h").
+        "signal_strength_threshold": 30        # Kekuatan sinyal minimum untuk membuka trade.
+    }
+    ```
+
+5.  **Mode Trading (Kamus `TRADING_MODES`):**
+    Tinjau dan sesuaikan mode "safe", "standard", dan "aggressive" yang sudah ada, atau tambahkan mode Anda sendiri. Setiap mode mendefinisikan leverage, persentase TP/SL, persentase ukuran posisi, dan maks trade harian.
 
 ---
 
 ## ▶️ Cara Pakai
 
 1.  **Jalankan Bot:**
-    Dari terminal atau command prompt (pastikan lingkungan virtual aktif):
+    Dari terminal Anda (dengan lingkungan virtual aktif):
     ```bash
-    python binance-futures-bot.py
+    python Futures.py  # Atau nama file skrip utama bot Anda
     ```
-    Bot akan mulai berjalan, dan Anda akan melihat log di konsol. Ia akan terhubung ke Telegram.
+    Bot akan mulai, terhubung ke Binance dan Telegram. Pantau log di konsol.
 
-2.  **Interaksi dengan Bot di Telegram:**
-    Buka chat dengan bot Anda di Telegram. Hanya pengguna yang `ADMIN_USER_IDS`-nya terdaftar yang dapat menggunakan perintah berikut:
+2.  **Interaksi via Telegram:**
+    Hanya `ADMIN_USER_IDS` yang dapat menggunakan perintah ini.
 
-    **Perintah Umum:**
-    *   `/start` 👋: Memulai interaksi dengan bot dan menampilkan menu utama.
-    *   `/help` ℹ️: Menampilkan daftar perintah yang tersedia dan fungsinya.
-    *   `/status` 📊: Menampilkan status bot saat ini.
-    *   `/config` ⚙️: Menampilkan konfigurasi bot saat ini.
-    *   `/set [parameter] [nilai]` 🔧: Mengubah parameter konfigurasi.
-        *   Contoh: `/set leverage 15`
-    *   `/trades` 📜: Menampilkan histori beberapa trading terakhir.
-    *   `/stats` 📈: Menampilkan statistik trading harian.
-    *   `/balance` 💰: Menampilkan saldo akun Binance Futures Anda.
-    *   `/positions` 📂: Menampilkan semua posisi terbuka saat ini.
-    *   `/indicators [simbol]` 📉: Menampilkan nilai indikator teknikal terbaru.
+    **Umum & Status:**
+    *   `/start` 👋: Menu utama.
+    *   `/help` ℹ️: Daftar perintah.
+    *   `/status` 📊: Status operasional bot.
+    *   `/config` ⚙️: Konfigurasi bot.
+    *   `/stats` 📈: Statistik trading harian.
+    *   `/balance` 💰: Saldo akun Binance Futures.
+    *   `/positions` 📂: Posisi terbuka saat ini.
+    *   `/trades` 📜: Histori trading terbaru.
+    *   `/indicators <SIMBOL>` 📉: Indikator teknikal untuk simbol (misal, `/indicators BTCUSDT`).
 
-    **Perintah Trading:**
-    *   `/starttrade` ▶️: Memulai proses trading otomatis.
-    *   `/stoptrade` ⏹️: Menghentikan proses trading otomatis.
-    *   `/closeall` ❌: Menutup semua posisi terbuka saat ini (gunakan dengan hati-hati).
+    **Kontrol Trading:**
+    *   `/starttrade` ▶️: Memulai trading otomatis.
+    *   `/stoptrade` ⏹️: Menghentikan trading otomatis.
+    *   `/closeall` ❌: Menutup semua posisi terbuka (gunakan dengan hati-hati!).
 
-    **Perintah Pengaturan Lanjutan:**
-    *   `/setleverage [nilai]` 🔩: Mengatur leverage default.
-    *   `/setmode [mode]` 🔄: Mengatur mode trading (`safe`, `standard`, `aggressive`).
-    *   `/addpair [simbol]` ➕: Menambahkan pasangan trading.
-    *   `/removepair [simbol]` ➖: Menghapus pasangan trading.
-    *   `/setprofit [target_profit] [loss_limit]` 🎯: Mengatur target profit harian (%) dan batas kerugian harian (%).
+    **Pengaturan & Konfigurasi:**
+    *   `/set <param> <nilai>` 🔧: Mengubah konfigurasi umum (misal, `/set leverage 15`).
+    *   `/setleverage <nilai>` 🔩, `/setmode <mode>`, `/addpair <simbol>`, `/removepair <simbol>`, `/setprofit <target_profit%> <loss_limit%>` 🎯.
 
-    **Perintah Trading Riil & Testnet:**
-    *   `/enablereal` 💵: Mengaktifkan trading riil. **PERHATIAN: Menggunakan dana sungguhan!**
-    *   `/disablereal` 🎮: Menonaktifkan trading riil (kembali ke mode simulasi).
-    *   `/toggletestnet` 🧪: Beralih antara Testnet dan API Produksi (Live).
-    *   `/testapi` 📡: Menguji koneksi ke API Binance Futures.
+    🆕 **Perintah Pemilihan Pair Dinamis:**
+    *   `/toggledynamic` (Untuk diimplementasikan): Mengubah status `dynamic_pair_selection` True/False.
+    *   `/watchlist <add|remove|list> [SIMBOL]` (Untuk diimplementasikan): Mengelola `dynamic_watchlist_symbols`.
+    *   `/setdynamicpairs <jumlah>` (Untuk diimplementasikan): Mengatur `max_active_dynamic_pairs`.
+    *   `/setminvolume <jumlah_usdt>` (Untuk diimplementasikan): Mengatur `min_24h_volume_usdt_for_scan`.
+    *   `/scannedpairs` 🕵️: Menampilkan hasil pemindaian pair dinamis terakhir beserta kekuatan sinyalnya.
+
+    **Trading Riil & API:**
+    *   `/enablereal` 💵: **Mengaktifkan trading riil. GUNAKAN DENGAN SANGAT HATI-HATI!**
+    *   `/disablereal` 🎮: Menonaktifkan trading riil (mode simulasi).
+    *   `/toggletestnet` 🧪: Beralih antara API Live dan Testnet.
+    *   `/testapi` 📡: Menguji koneksi API Binance.
 
 ---
 
 ## 📂 Struktur Bot
 
-*   `BinanceFuturesAPI`: Kelas untuk interaksi dengan API Binance Futures.
-*   `TechnicalAnalysis`: Kelas untuk menghitung indikator teknikal (`pandas_ta`).
-*   `TradingBot`: Kelas inti logika trading, status, pemrosesan sinyal, dan order.
-*   `TelegramBotHandler`: Kelas untuk menangani interaksi Telegram dan notifikasi.
-*   `main()`: Fungsi utama untuk inisialisasi dan menjalankan bot.
+*   `BinanceFuturesAPI`: Menangani interaksi API Binance Futures.
+*   `TechnicalAnalysis`: Menghitung indikator teknikal menggunakan `pandas_ta`.
+*   `TradingBot`: Logika trading inti, pemrosesan sinyal, manajemen order, pemindaian pair dinamis.
+*   `TelegramBotHandler`: Mengelola interaksi Telegram dan notifikasi.
+*   `main()`: Inisialisasi dan menjalankan bot.
 
 ---
 
 ## ⚠️ Catatan Penting & Peringatan Risiko ⚠️
 
-*   **RISIKO TINGGI:** Trading Cryptocurrency Futures sangat spekulatif. Anda bisa kehilangan seluruh modal Anda. Bot ini adalah alat dan **tidak menjamin keuntungan**. Gunakan dengan risiko Anda sendiri.
-*   **BUKAN NASIHAT KEUANGAN:** Ini bukan nasihat keuangan. Lakukan riset Anda sendiri (DYOR).
-*   **KEAMANAN API KEY:** Jaga kerahasiaan API Key dan Secret Key Anda. Jangan pernah membagikannya.
-*   **UJI COBA DI TESTNET:** Sebelum menggunakan dana riil, lakukan pengujian ekstensif di **Testnet** Binance.
-*   **PANTAU SECARA AKTIF:** Meskipun otomatis, pantau kinerjanya, terutama saat dana riil terlibat.
-*   **PENGEMBANGAN LEBIH LANJUT:** Skrip ini adalah dasar. Anda bebas memodifikasi dan meningkatkannya.
+*   **RISIKO TINGGI:** Trading Cryptocurrency Futures bersifat spekulatif dan memiliki risiko tinggi. Anda bisa kehilangan seluruh modal Anda. Bot ini adalah alat dan **tidak menjamin keuntungan**. Gunakan atas kebijaksanaan dan risiko Anda sendiri.
+*   **BUKAN NASIHAT KEUANGAN:** Konten ini hanya untuk tujuan informasi dan tidak boleh dianggap sebagai nasihat keuangan. Selalu Lakukan Riset Anda Sendiri (DYOR).
+*   **KEAMANAN API KEY:** Lindungi API Key dan Secret Key Anda. Jangan pernah membagikannya atau menyimpannya di repositori publik.
+*   **UJI SECARA MENYELURUH:** Sebelum menggunakan dana riil, uji bot secara ekstensif di **Testnet** Binance dan/atau dalam mode simulasi (`use_real_trading = False`).
+*   **PANTAU KINERJA:** Meskipun otomatis, pantau kinerja bot dan kondisi pasar secara aktif.
+*   **RISIKO PAIR DINAMIS:** Meskipun pemilihan pair dinamis dapat menemukan peluang, ia juga dapat memilih pair yang sangat volatil atau kurang dipahami jika daftar pantau dan filter likuiditas Anda tidak diatur dengan cermat.
 
 ---
 
 ## 📜 Lisensi
 
-Skrip ini didistribusikan di bawah Lisensi MIT.
-Skrip ini disediakan "SEBAGAIMANA ADANYA" tanpa jaminan apa pun. Pengguna bertanggung jawab penuh atas penggunaan skrip ini.
+Proyek ini dilisensikan di bawah Lisensi MIT. Lihat file `LICENSE` untuk detailnya.
+Skrip ini disediakan "SEBAGAIMANA ADANYA", tanpa jaminan apa pun. Pengguna bertanggung jawab penuh atas penggunaannya.
 
 ---
 
 ⭐ Jika Anda merasa bot ini bermanfaat, pertimbangkan untuk memberikan bintang pada repositori ini! ⭐
 [https://github.com/Afinnn954/Binance-Futures-BOT](https://github.com/Afinnn954/Binance-Futures-BOT)
+
+**Credit/Support:** Telegram [t.me/JoestarMojo](https://t.me/JoestarMojo)
 
 </details>
