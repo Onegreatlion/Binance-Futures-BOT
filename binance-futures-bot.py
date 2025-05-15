@@ -14,7 +14,7 @@ import pandas as pd
 # Import pandas_ta instead of talib
 import pandas_ta as ta
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup,  constants
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 # Configure logging
@@ -91,8 +91,8 @@ CONFIG = {
     "trading_mode": "safe",     # Current trading mode
     "max_daily_trades": 10,    # Maximum number of trades per day
     "signal_check_interval": 30,  # Check for signals every 30 seconds
-    "use_testnet": True,        # Use Binance testnet for testing
-    "use_real_trading": False,  # Set to True to enable real trading with Binance API
+    "use_testnet": False,        # Use Binance testnet for testing
+    "use_real_trading": True,  # Set to True to enable real trading with Binance API
     "daily_profit_target": 5.0,    # Daily profit target in percentage
     "daily_loss_limit": 3.0,       # Daily loss limit in percentage
     "hedge_mode": True,            # Use hedge mode (separate long and short positions)
@@ -740,59 +740,110 @@ class TradingBot:
             logger.error(f"Error queueing notification: {e}")
 
     def process_notification_queue(self):
+        """Process the notification queue in a separate thread"""
         logger.info("Starting notification queue processor thread")
 
-        app_loop = None
-        if self.telegram_bot and hasattr(self.telegram_bot, 'application') and self.telegram_bot.application:
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        while self.running: # Check self.running to allow graceful shutdown
             try:
-                app_loop = self.telegram_bot.application._loop
-            except AttributeError:
-                logger.error("Could not access internal loop attribute (_loop) on Telegram Application. The structure of python-telegram-bot might have changed.")
-                return
+                # Get the next notification from the queue (blocking with timeout)
+                message, keyboard = self.notification_queue.get(block=True, timeout=1.0)
 
-        if not app_loop:
-            logger.error("Telegram bot application loop not available. Notification thread stopping.")
-            return
+                if message is None and keyboard is None: # Sentinel for stopping
+                    logger.info("Notification processor received stop signal.")
+                    break
 
-        while True:
-            try:
-                message, keyboard = self.notification_queue.get(block=True)
+                # Log that we're processing a notification
+                # logger.info(f"Processing notification: {message[:30]}...") # Optional
 
-                logger.info(f"Processing notification: {message[:50]}...")
+                if not self.telegram_bot or not hasattr(self.telegram_bot, 'admin_chat_ids') or not self.telegram_bot.admin_chat_ids:
+                    logger.error("Cannot send notification: Telegram bot not initialized or no admin chat IDs")
+                    self.notification_queue.task_done()
+                    time.sleep(1) # Brief pause if misconfigured
+                    continue
 
                 for chat_id in self.telegram_bot.admin_chat_ids:
                     try:
-                        coro_to_run = None
+                        # First try with asyncio.run_coroutine_threadsafe
+                        coro_payload = {
+                            'chat_id': chat_id,
+                            'text': message,
+                            'parse_mode': constants.ParseMode.HTML # Good practice
+                        }
                         if keyboard:
-                            coro_to_run = self.telegram_bot.application.bot.send_message(
-                                chat_id=chat_id,
-                                text=message,
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                        else:
-                            coro_to_run = self.telegram_bot.application.bot.send_message(
-                                chat_id=chat_id,
-                                text=message
-                            )
+                            coro_payload['reply_markup'] = InlineKeyboardMarkup(keyboard)
+                        
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.telegram_bot.application.bot.send_message(**coro_payload),
+                            loop
+                        )
+                        future.result(timeout=10) # Wait for the result (with timeout)
+                        # logger.info(f"Sent notification to {chat_id} via asyncio") # Optional
+                    
+                    except Exception as e1:
+                        logger.error(f"Failed to send notification using asyncio to {chat_id}: {e1}. Trying fallback.")
 
-                        future = asyncio.run_coroutine_threadsafe(coro_to_run, app_loop)
-                        future.result(timeout=15)
+                        # Fallback: Try using requests directly
+                        try:
+                            token = None
+                            if hasattr(self.telegram_bot, 'token'):
+                                token = self.telegram_bot.token
+                            elif hasattr(self.telegram_bot.application, 'bot') and hasattr(self.telegram_bot.application.bot, '_token'): # PTB v20+
+                                token = self.telegram_bot.application.bot._token
+                            elif hasattr(self.telegram_bot.application, 'token'): # Older PTB
+                                token = self.telegram_bot.application.token
 
-                    except asyncio.TimeoutError:
-                        logger.error(f"Timeout sending notification to {chat_id} for message: {message[:50]}...")
-                    except Exception as e:
-                        logger.error(f"Failed to send notification to {chat_id} for message: {message[:50]}... Error: {e}")
 
+                            if not token:
+                                logger.error("Could not find Telegram token for fallback.")
+                                raise Exception("Telegram token not found")
+
+                            url = f"https://api.telegram.org/bot{token}/sendMessage"
+                            payload = {
+                                'chat_id': chat_id,
+                                'text': message,
+                                'parse_mode': 'HTML'
+                            }
+
+                            if keyboard:
+                                keyboard_json = []
+                                for row in keyboard:
+                                    keyboard_row = []
+                                    for button in row:
+                                        keyboard_row.append({
+                                            'text': button.text,
+                                            'callback_data': button.callback_data
+                                        })
+                                    keyboard_json.append(keyboard_row)
+                                payload['reply_markup'] = json.dumps({'inline_keyboard': keyboard_json})
+
+                            response = requests.post(url, json=payload, timeout=10)
+                            if response.status_code == 200:
+                                logger.info(f"Sent notification to {chat_id} using fallback requests.")
+                            else:
+                                logger.error(f"Fallback requests failed for {chat_id} with status {response.status_code}: {response.text}")
+                                # raise Exception(f"HTTP error: {response.status_code}") # Don't re-raise, just log
+                        except Exception as e2:
+                            logger.error(f"Fallback requests method also failed for {chat_id}: {e2}")
+                
                 self.notification_queue.task_done()
-
+                # time.sleep(0.1) # Small optional delay
 
             except queue.Empty:
-                 pass
+                if not self.running and self.notification_queue.empty(): # Check if bot is stopped and queue is empty
+                    break
+                continue # Loop again if queue is empty but bot is running
             except Exception as e:
-                logger.error(f"Error in notification_queue processing loop: {e}", exc_info=True)
+                logger.error(f"Error processing notification queue: {e}", exc_info=True)
+                if not self.running: # If critical error and bot should stop
+                    break
                 time.sleep(5)
-    
-
+        
+        loop.close()
+        logger.info("Notification queue processor thread stopped.")
     def start_trading(self):
         """Start the trading bot"""
         if not self.running:
@@ -836,18 +887,61 @@ class TradingBot:
         return False
 
     def stop_trading(self):
-        """Stop the trading bot"""
-        if self.running:
-            self.running = False
+        if not self.running:
+            logger.info("Trading bot is not running.")
+            return False # Not running
+            
+        logger.info("Stopping trading bot...")
+        self.running = False # Signal threads to stop
 
-            if self.signal_check_thread:
-                self.signal_check_thread.join(timeout=1.0)
-                
-            # Send notification that bot has stopped
-            self.send_notification("⏹️ Trading Bot Stopped")
+        if self.signal_check_thread and self.signal_check_thread.is_alive():
+            try:
+                # No specific signal needed for signal_check_thread if it checks self.running
+                self.signal_check_thread.join(timeout=self.config["signal_check_interval"] + 2.0) # Wait for it to finish current iteration + buffer
+                if self.signal_check_thread.is_alive():
+                    logger.warning("Signal check thread did not terminate in time.")
+                else:
+                    logger.info("Signal check thread joined.")
+            except Exception as e:
+                logger.error(f"Error joining signal_check_thread: {e}")
+        
+        if self.notification_thread and self.notification_thread.is_alive():
+            try:
+                self.notification_queue.put((None, None)) # Send sentinel to notification queue
+                self.notification_thread.join(timeout=7.0) # Give a bit more time for final msgs + sentinel
+                if self.notification_thread.is_alive():
+                    logger.warning("Notification thread did not terminate in time.")
+                else:
+                    logger.info("Notification thread joined.")
+            except Exception as e:
+                logger.error(f"Error joining notification_thread: {e}")
+        
+        stop_message = "⏹️ <b>Trading Bot Stopped</b> ⏹️"
+        # We try to send a final notification. Since the notification thread might be stopped,
+        # this might not go through the queue as intended, but it's a best effort.
+        # A more robust way for this final message would be to send it synchronously
+        # before fully stopping the notification thread, or have the notification thread
+        # send it upon receiving the sentinel. For now, this is a simple attempt.
+        if self.telegram_bot and hasattr(self.telegram_bot, 'admin_chat_ids') and self.telegram_bot.admin_chat_ids:
+             # Directly try to send without queueing if thread is likely down
+            try:
+                loop = asyncio.get_event_loop() # Try to get existing loop or new one
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
 
-            return True
-        return False
+                for chat_id in self.telegram_bot.admin_chat_ids:
+                    coro = self.telegram_bot.application.bot.send_message(chat_id=chat_id, text=stop_message, parse_mode=constants.ParseMode.HTML)
+                    if loop.is_running():
+                         asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=5)
+                    else:
+                         loop.run_until_complete(coro) # If loop isn't running, run it for this
+            except Exception as e:
+                logger.error(f"Could not send final stop notification: {e}")
+
+
+        logger.info("Trading bot stopped.")
+        return True
 
     def apply_trading_mode_settings(self):
         """Apply settings from the selected trading mode"""
@@ -1389,16 +1483,19 @@ class TelegramBotHandler:
         await update.message.reply_text(help_text)
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /status command"""
         if not await self.is_authorized(update):
             return
 
+        message_object_to_interact_with = update.callback_query.message if update.callback_query else update.message
+        
+        if not message_object_to_interact_with:
+            logger.error("status_command: Could not determine message object from update.")
+            if update.effective_chat:
+                await update.effective_chat.send_text("Error: Could not process status request.")
+            return
+
         if not self.trading_bot:
-            message = "Trading bot not initialized"
-            if update.callback_query:
-                await update.callback_query.edit_message_text(message)
-            else:
-                await update.message.reply_text(message)
+            await message_object_to_interact_with.reply_text("Trading bot not initialized.")
             return
 
         active_trades = [t for t in ACTIVE_TRADES if not t.get('completed', False)]
@@ -1412,10 +1509,6 @@ class TelegramBotHandler:
         for trade in completed_trades:
             result = trade.get('leveraged_profit_pct', 0)
             total_profit_pct += result
-             
-            result = trade.get('leveraged_profit_pct', 0)
-            total_profit_pct += result
-            
             if result > 0:
                 win_count += 1
             else:
@@ -1426,21 +1519,21 @@ class TelegramBotHandler:
         real_trading_status = "✅ Enabled" if self.trading_bot.config["use_real_trading"] else "❌ Disabled (Simulation)"
 
         status_text = (
-            f"📊 BOT STATUS\n\n"
-            f"Trading: {'✅ Running' if self.trading_bot.running else '❌ Stopped'}\n"
-            f"Mode: {self.trading_bot.config['trading_mode'].capitalize()}\n"
-            f"Leverage: {self.trading_bot.config['leverage']}x\n"
-            f"Take Profit: {self.trading_bot.config['take_profit']}%\n"
-            f"Stop Loss: {self.trading_bot.config['stop_loss']}%\n\n"
-            f"Real Trading: {real_trading_status}\n"
-            f"Active Trades: {len(active_trades)}\n"
-            f"Completed Trades: {len(completed_trades)}\n"
-            f"Total Profit %: {total_profit_pct:.2f}%\n"
-            f"Total Profit USDT: ${total_profit_usdt:.2f}\n"
-            f"Win Rate: {win_rate:.1f}% ({win_count}/{len(completed_trades)})\n\n"
-            f"Trading Pairs: {', '.join(self.trading_bot.config['trading_pairs'])}\n"
-            f"Daily Profit Target: {self.trading_bot.config['daily_profit_target']}%\n"
-            f"Daily Loss Limit: {self.trading_bot.config['daily_loss_limit']}%\n"
+            f"📊 <b>BOT STATUS</b> 📊\n\n"
+            f"<b>Trading:</b> {'✅ Running' if self.trading_bot.running else '❌ Stopped'}\n"
+            f"<b>Mode:</b> {self.trading_bot.config['trading_mode'].capitalize()}\n"
+            f"<b>Leverage:</b> {self.trading_bot.config['leverage']}x\n"
+            f"<b>Take Profit:</b> {self.trading_bot.config['take_profit']}%\n"
+            f"<b>Stop Loss:</b> {self.trading_bot.config['stop_loss']}%\n\n"
+            f"<b>Real Trading:</b> {real_trading_status}\n"
+            f"<b>Active Trades:</b> {len(active_trades)}\n"
+            f"<b>Completed Trades:</b> {len(completed_trades)}\n"
+            f"<b>Total Profit %:</b> {total_profit_pct:.2f}%\n"
+            f"<b>Total Profit USDT:</b> ${total_profit_usdt:.2f}\n"
+            f"<b>Win Rate:</b> {win_rate:.1f}% ({win_count}/{len(completed_trades)})\n\n"
+            f"<b>Trading Pairs:</b> {', '.join(self.trading_bot.config['trading_pairs'])}\n"
+            f"<b>Daily Profit Target:</b> {self.trading_bot.config['daily_profit_target']}%\n"
+            f"<b>Daily Loss Limit:</b> {self.trading_bot.config['daily_loss_limit']}%"
         )
 
         keyboard = [
@@ -1452,29 +1545,43 @@ class TelegramBotHandler:
              InlineKeyboardButton(f"{'🔴 Disable' if self.trading_bot.config['use_real_trading'] else '🟢 Enable'} Real Trading",
                                  callback_data="toggle_real_trading")]
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                status_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            try:
+                await update.callback_query.edit_message_text(
+                    status_text,
+                    reply_markup=reply_markup,
+                    parse_mode=constants.ParseMode.HTML
+                )
+            except Exception as e:
+                logger.warning(f"Failed to edit message in status_command (callback): {e}. Sending new message.")
+                await message_object_to_interact_with.reply_text(
+                    status_text,
+                    reply_markup=reply_markup,
+                    parse_mode=constants.ParseMode.HTML
+                )
         else:
-            await update.message.reply_text(
+            await message_object_to_interact_with.reply_text(
                 status_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=reply_markup,
+                parse_mode=constants.ParseMode.HTML
             )
 
     async def config_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /config command"""
         if not await self.is_authorized(update):
             return
 
+        message_object_to_interact_with = update.callback_query.message if update.callback_query else update.message
+
+        if not message_object_to_interact_with:
+            logger.error("config_command: Could not determine message object from update.")
+            if update.effective_chat:
+                await update.effective_chat.send_text("Error: Could not process config request.")
+            return
+
         if not self.trading_bot:
-            message = "Trading bot not initialized"
-            if update.callback_query:
-                await update.callback_query.edit_message_text(message)
-            else:
-                await update.message.reply_text(message)
+            await message_object_to_interact_with.reply_text("Trading bot not initialized.")
             return
 
         config_display = self.trading_bot.config.copy()
@@ -1483,25 +1590,27 @@ class TelegramBotHandler:
         if 'api_secret' in config_display:
             config_display['api_secret'] = '****' if config_display['api_secret'] else 'Not set'
 
-        config_text = "⚙️ BOT CONFIGURATION\n\n"
-        config_text += "Trading Settings:\n"
-        config_text += f"• Mode: {config_display['trading_mode'].capitalize()}\n"
-        config_text += f"• Leverage: {config_display['leverage']}x\n"
-        config_text += f"• Take Profit: {config_display['take_profit']}%\n"
-        config_text += f"• Stop Loss: {config_display['stop_loss']}%\n"
-        config_text += f"• Position Size: {config_display['position_size_percentage']}% of balance\n"
-        config_text += f"• Max Daily Trades: {config_display['max_daily_trades']}\n\n"
-        config_text += "Trading Pairs:\n"
-        config_text += f"• {', '.join(config_display['trading_pairs'])}\n\n"
-        config_text += "Profit/Loss Settings:\n"
-        config_text += f"• Daily Profit Target: {config_display['daily_profit_target']}%\n"
-        config_text += f"• Daily Loss Limit: {config_display['daily_loss_limit']}%\n\n"
-        config_text += "API Settings:\n"
-        config_text += f"• API Key: {config_display['api_key']}\n"
-        config_text += f"• API Secret: {config_display['api_secret']}\n"
-        config_text += f"• Use Testnet: {'Yes' if config_display['use_testnet'] else 'No'}\n"
-        config_text += f"• Real Trading: {'Enabled' if config_display['use_real_trading'] else 'Disabled (Simulation)'}\n"
-
+        config_text = (
+            f"⚙️ <b>BOT CONFIGURATION</b> ⚙️\n\n"
+            f"<b>Trading Settings:</b>\n"
+            f"• Mode: {config_display['trading_mode'].capitalize()}\n"
+            f"• Leverage: {config_display['leverage']}x\n"
+            f"• Take Profit: {config_display['take_profit']}%\n"
+            f"• Stop Loss: {config_display['stop_loss']}%\n"
+            f"• Position Size: {config_display['position_size_percentage']}% of balance\n"
+            f"• Max Daily Trades: {config_display['max_daily_trades']}\n\n"
+            f"<b>Trading Pairs:</b>\n"
+            f"• {', '.join(config_display['trading_pairs'])}\n\n"
+            f"<b>Profit/Loss Settings:</b>\n"
+            f"• Daily Profit Target: {config_display['daily_profit_target']}%\n"
+            f"• Daily Loss Limit: {config_display['daily_loss_limit']}%\n\n"
+            f"<b>API Settings:</b>\n"
+            f"• API Key: {config_display['api_key']}\n"
+            f"• API Secret: {config_display['api_secret']}\n"
+            f"• Use Testnet: {'Yes' if config_display['use_testnet'] else 'No'}\n"
+            f"• Real Trading: {'Enabled' if config_display['use_real_trading'] else 'Disabled (Simulation)'}"
+        )
+        
         keyboard = [
             [InlineKeyboardButton("Change Mode", callback_data="select_trading_mode")],
             [InlineKeyboardButton("Set Leverage", callback_data="set_leverage"),
@@ -1511,16 +1620,27 @@ class TelegramBotHandler:
                                  callback_data="toggle_real_trading")],
             [InlineKeyboardButton("Back to Status", callback_data="status")]
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
         if update.callback_query:
-            await update.callback_query.edit_message_text(
-                config_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            try:
+                await update.callback_query.edit_message_text(
+                    config_text,
+                    reply_markup=reply_markup,
+                    parse_mode=constants.ParseMode.HTML
+                )
+            except Exception as e:
+                logger.warning(f"Failed to edit message in config_command (callback): {e}. Sending new message.")
+                await message_object_to_interact_with.reply_text(
+                    config_text,
+                    reply_markup=reply_markup,
+                    parse_mode=constants.ParseMode.HTML
+                )
         else:
-            await update.message.reply_text(
+            await message_object_to_interact_with.reply_text(
                 config_text,
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=reply_markup,
+                parse_mode=constants.ParseMode.HTML
             )
 
     async def set_config_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1648,16 +1768,50 @@ class TelegramBotHandler:
         await update.message.reply_text(trades_text)
 
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /stats command to show daily trading statistics"""
         if not await self.is_authorized(update):
             return
 
-        if not self.trading_bot:
-            await update.message.reply_text("Trading bot not initialized")
+        is_callback = bool(update.callback_query)
+        message_object_to_interact_with = update.callback_query.message if is_callback else update.message
+        
+        if not message_object_to_interact_with:
+            logger.error("stats_command: Could not determine message object from update.")
+            if update.effective_chat:
+                await update.effective_chat.send_text("Error: Could not process stats request.")
             return
 
-        stats_message = self.trading_bot.get_daily_stats_message()
-        await update.message.reply_text(stats_message)
+        if not self.trading_bot:
+            await message_object_to_interact_with.reply_text("Trading bot not initialized.")
+            return
+
+        stats_message_text = self.trading_bot.get_daily_stats_message()
+        
+        keyboard_nav = [
+            [InlineKeyboardButton("🔙 Back to Status", callback_data="status")],
+            [InlineKeyboardButton("⚙️ Config", callback_data="config")]
+        ]
+        reply_markup_nav = InlineKeyboardMarkup(keyboard_nav)
+
+        if is_callback:
+            try:
+                await update.callback_query.edit_message_text(
+                    stats_message_text, 
+                    parse_mode=constants.ParseMode.HTML,
+                    reply_markup=reply_markup_nav
+                )
+            except Exception as e:
+                logger.warning(f"Failed to edit message in stats_command (callback): {e}. Sending new message.")
+                await message_object_to_interact_with.reply_text(
+                    stats_message_text, 
+                    parse_mode=constants.ParseMode.HTML,
+                    reply_markup=reply_markup_nav
+                )
+        else:
+            await message_object_to_interact_with.reply_text(
+                stats_message_text, 
+                parse_mode=constants.ParseMode.HTML,
+                reply_markup=reply_markup_nav 
+            )
 
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /balance command to show Binance account balance"""
@@ -1687,56 +1841,86 @@ class TelegramBotHandler:
             await status_msg.edit_text(f"❌ Error getting account balance: {str(e)}")
 
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /positions command to show open positions"""
         if not await self.is_authorized(update):
             return
 
-        if not self.trading_bot or not self.trading_bot.binance_api:
-            await update.message.reply_text("Trading bot or Binance API not initialized")
+        initial_reply_source_message = update.callback_query.message if update.callback_query else update.message
+        
+        if not initial_reply_source_message:
+            logger.error("positions_command: Could not determine initial reply source.")
+            if update.effective_chat:
+                 await update.effective_chat.send_text("Error: Could not process positions request.")
             return
 
-        status_msg = await update.message.reply_text("🔄 Fetching open positions... Please wait.")
+        if not self.trading_bot or not self.trading_bot.binance_api:
+            await initial_reply_source_message.reply_text("Trading bot or Binance API not initialized.")
+            return
+
+        status_msg_being_edited = await initial_reply_source_message.reply_text(
+            "🔄 Fetching open positions... Please wait.",
+            parse_mode=constants.ParseMode.HTML
+        )
 
         try:
             positions = self.trading_bot.binance_api.get_open_positions()
+            positions_text = "📈 <b>OPEN POSITIONS</b> 📈\n\n"
+            found_positions = False
+
             if positions:
-                positions_text = "📈 OPEN POSITIONS\n\n"
                 for position in positions:
+                    if float(position['positionAmt']) == 0:
+                        continue
+                    found_positions = True
                     symbol = position['symbol']
                     amount = float(position['positionAmt'])
                     entry_price = float(position['entryPrice'])
                     mark_price = float(position['markPrice'])
                     unrealized_pnl = float(position['unrealizedProfit'])
                     leverage = float(position['leverage'])
+                    position_side_api = position.get('positionSide', 'BOTH') 
+
+                    actual_side_display = "LONG" if amount > 0 else "SHORT"
                     
-                    # Determine if long or short
-                    position_side = "LONG" if amount > 0 else "SHORT"
-                    
-                    # Calculate ROI
-                    if entry_price > 0:
-                        if position_side == "LONG":
-                            roi = ((mark_price - entry_price) / entry_price) * 100 * leverage
-                        else:
-                            roi = ((entry_price - mark_price) / entry_price) * 100 * leverage
-                    else:
-                        roi = 0
+                    roi_leveraged = 0.0
+                    if entry_price != 0 and leverage != 0:
+                        initial_margin = (abs(amount) * entry_price) / leverage
+                        if initial_margin != 0:
+                            roi_leveraged = (unrealized_pnl / initial_margin) * 100
                     
                     positions_text += (
-                        f"Symbol: {symbol}\n"
-                        f"Side: {position_side}\n"
-                        f"Size: {abs(amount)}\n"
-                        f"Entry Price: ${entry_price:.4f}\n"
-                        f"Current Price: ${mark_price:.4f}\n"
-                        f"Unrealized PnL: ${unrealized_pnl:.2f}\n"
-                        f"ROI: {roi:.2f}%\n"
-                        f"Leverage: {leverage}x\n\n"
+                        f"<b>Symbol:</b> {symbol}\n"
+                        f"<b>Side:</b> {actual_side_display} (API Side: {position_side_api})\n"
+                        f"<b>Size:</b> {abs(amount)}\n"
+                        f"<b>Entry Price:</b> ${entry_price:.4f}\n"
+                        f"<b>Mark Price:</b> ${mark_price:.4f}\n"
+                        f"<b>Unrealized PnL:</b> ${unrealized_pnl:.2f} (Leveraged)\n"
+                        f"<b>ROI:</b> {roi_leveraged:.2f}%\n"
+                        f"<b>Leverage:</b> {int(leverage)}x\n\n"
                     )
-                
-                await status_msg.edit_text(positions_text)
+            
+            keyboard_nav = [[InlineKeyboardButton("🔙 Back to Status", callback_data="status")]]
+            reply_markup_nav = InlineKeyboardMarkup(keyboard_nav)
+
+            if found_positions:
+                await status_msg_being_edited.edit_text(
+                    positions_text, 
+                    parse_mode=constants.ParseMode.HTML,
+                    reply_markup=reply_markup_nav
+                )
             else:
-                await status_msg.edit_text("No open positions found.")
+                await status_msg_being_edited.edit_text(
+                    "No open positions found.",
+                    reply_markup=reply_markup_nav
+                )
         except Exception as e:
-            await status_msg.edit_text(f"❌ Error getting open positions: {str(e)}")
+            logger.error(f"Error processing positions data: {e}", exc_info=True)
+            if status_msg_being_edited:
+                await status_msg_being_edited.edit_text(
+                    f"❌ Error getting open positions: {str(e)}",
+                    parse_mode=constants.ParseMode.HTML 
+                )
+            else:
+                 await initial_reply_source_message.reply_text(f"❌ Error getting open positions: {str(e)}")
 
     async def indicators_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /indicators command to show technical indicators for a symbol"""
@@ -2283,13 +2467,28 @@ class TelegramBotHandler:
             "I only respond to commands. Use /help to see available commands."
         )
 
-    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle errors in the telegram bot"""
-        logger.error(f"Exception while handling an update: {context.error}")
-        if update and update.effective_chat:
-            await update.effective_chat.send_message(
-                "An error occurred while processing your request. Please try again later."
-            )
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error(f"Exception while handling an update (Error: {context.error}):", exc_info=context.error)
+
+        chat_id_to_notify = None
+        if isinstance(update, Update):
+            if update.effective_chat:
+                chat_id_to_notify = update.effective_chat.id
+            elif update.callback_query and update.callback_query.message:
+                chat_id_to_notify = update.callback_query.message.chat.id
+            elif update.message:
+                chat_id_to_notify = update.message.chat.id
+
+        if chat_id_to_notify:
+            try:
+                await self.application.bot.send_message(
+                    chat_id=chat_id_to_notify,
+                    text="An internal error occurred while processing your request. The developers have been notified."
+                )
+            except Exception as e_send:
+                logger.error(f"Failed to send error notification to chat {chat_id_to_notify}: {e_send}")
+        else:
+            logger.warning("Error handler: Could not determine chat_id from update to send user-facing error message.")
 
     def run(self):
         """Run the bot"""
