@@ -20,19 +20,19 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
 # ======== BOT CONFIGURATION ========
 # Replace these values with your own
-TELEGRAM_BOT_TOKEN = "BOT_TOKEN"  # Replace with your bot token
-ADMIN_USER_IDS = [1272488609]    # Replace with your Telegram user ID(s)
+TELEGRAM_BOT_TOKEN = "API_BOT_TELEGRAM"  # Replace with your bot token
+ADMIN_USER_IDS = [1234569]    # Replace with your Telegram user ID(s)
 # ==================================
 
 # Binance API configuration
-BINANCE_API_KEY = "API"  # Your Binance API key
-BINANCE_API_SECRET = "API" 
+BINANCE_API_KEY = "API_KEY"  # Your Binance API key
+BINANCE_API_SECRET = "API_SECRET" 
 BINANCE_API_URL = "https://fapi.binance.com"  # Futures API URL
 BINANCE_TEST_API_URL = "https://testnet.binancefuture.com"  # Testnet URL for testing
 
@@ -95,7 +95,21 @@ CONFIG = {
     "use_real_trading": True,  # Set to True to enable real trading with Binance API
     "daily_profit_target": 5.0,    # Daily profit target in percentage
     "daily_loss_limit": 3.0,       # Daily loss limit in percentage
-    "hedge_mode": True,            # Use hedge mode (separate long and short positions)
+    "hedge_mode": True,  # Use hedge mode (separate long and short positions)
+    "post_trade_delay_seconds": 2, # jika Anda mau jeda setelah trade(detik)
+    "dynamic_watchlist_symbols": [ # Daftar koin XXXUSDT yang diizinkan untuk dipantau
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT", 
+        "AVAXUSDT", "DOTUSDT", "MATICUSDT", "SHIBUSDT", "TRXUSDT", "LINKUSDT", 
+        "LTCUSDT", "ATOMUSDT", "ETCUSDT", "BCHUSDT", "XLMUSDT", "NEARUSDT", "ALGOUSDT",
+        "FTMUSDT", "MANAUSDT", "SANDUSDT", "APEUSDT", "AXSUSDT", "FILUSDT", "ICPUSDT",
+        # Anda bisa mengambil daftar ini dari API Binance untuk top X by volume jika mau lebih dinamis lagi
+        # atau hardcode koin-koin yang Anda percaya.
+    ],
+    "max_active_dynamic_pairs": 3,  # Jumlah maksimum pair dinamis yang akan ditradingkan
+    "min_24h_volume_usdt_for_scan": 5000000, # Min volume 24jam (USDT) agar koin dipertimbangkan (5 Juta USDT)
+    "dynamic_scan_interval_seconds": 300, # Seberapa sering scan (detik), misal 5 menit
+    "dynamic_pair_selection": True,  # Aktifkan/Nonaktifkan fitur ini     
+    "api_call_delay_seconds": 0.5, # Jeda 0.5 detik antar panggilan API klines di scanner    
     "leverage": 5                  # Default leverage
 }
 
@@ -552,137 +566,357 @@ class BinanceFuturesAPI:
             logger.error(f"Error getting balance: {e}")
             return None
 
+# In TechnicalAnalysis class
+
 class TechnicalAnalysis:
     def __init__(self, binance_api):
         self.binance_api = binance_api
         self.settings = INDICATOR_SETTINGS
 
-    def calculate_indicators(self, symbol, timeframe=None):
-        """Calculate technical indicators for a symbol using pandas_ta instead of talib"""
-        if not timeframe:
-            timeframe = self.settings['candle_timeframe']
-            
-        # Get klines data
-        df = self.binance_api.get_klines(symbol, timeframe, limit=100)
-        if df is None or len(df) < 50:  # Need enough data for indicators
-            logger.error(f"Not enough data for {symbol} to calculate indicators")
+    def calculate_indicators(self, symbol: str, timeframe: str = None) -> dict | None:
+        """
+        Calculates technical indicators for a given symbol and timeframe.
+
+        Args:
+            symbol (str): The trading symbol (e.g., "BTCUSDT").
+            timeframe (str, optional): The candle timeframe (e.g., "5m", "1h"). 
+                                       Defaults to self.settings['candle_timeframe'].
+
+        Returns:
+            dict | None: A dictionary containing calculated indicators and other relevant data,
+                         or None if calculation fails or data is insufficient.
+        """
+        if timeframe is None:
+            timeframe = self.settings.get('candle_timeframe', '5m') # Default jika tidak ada di settings
+
+        # Tentukan panjang data minimum yang dibutuhkan berdasarkan indikator terpanjang
+        # Misalnya, EMA_long + beberapa candle ekstra untuk stabilitas BB dan RSI
+        ema_long_period = self.settings.get('ema_long', 50)
+        bb_period = self.settings.get('bb_period', 20)
+        rsi_period = self.settings.get('rsi_period', 14)
+        
+        # Ambil periode terpanjang dan tambahkan buffer (misal 20-30 candle)
+        # Ini untuk memastikan pandas_ta punya cukup data untuk menghasilkan nilai non-NaN
+        # di akhir series untuk semua indikator.
+        required_initial_candles = max(ema_long_period, bb_period, rsi_period)
+        buffer_candles = 30 # Buffer untuk stabilitas dan periode awal NaN
+        limit_request = required_initial_candles + buffer_candles
+        
+        logger.debug(f"[{symbol}@{timeframe}] Requesting klines from API, limit: {limit_request}")
+        
+        df: pd.DataFrame | None = None
+        try:
+            df = self.binance_api.get_klines(symbol, timeframe, limit=limit_request)
+        except Exception as e_klines:
+            logger.error(f"[{symbol}@{timeframe}] Exception during API call to get_klines: {e_klines}", exc_info=True)
+            return None
+
+        # --- Validasi DataFrame Awal ---
+        if df is None:
+            logger.error(f"[{symbol}@{timeframe}] get_klines returned None. Cannot calculate indicators.")
+            return None
+        
+        if not isinstance(df, pd.DataFrame):
+            logger.error(f"[{symbol}@{timeframe}] get_klines did not return a pandas DataFrame (type: {type(df)}). Cannot calculate.")
             return None
             
-        # Calculate RSI using pandas_ta
-        df['rsi'] = ta.rsi(df['close'], length=self.settings['rsi_period'])
+        if df.empty:
+            logger.error(f"[{symbol}@{timeframe}] get_klines returned an empty DataFrame. Cannot calculate indicators.")
+            return None
+
+        # Periksa apakah jumlah baris yang dikembalikan cukup, setidaknya untuk indikator terpanjang
+        if len(df) < required_initial_candles:
+            logger.error(
+                f"[{symbol}@{timeframe}] Insufficient data returned by get_klines. "
+                f"Got {len(df)} rows, needed at least {required_initial_candles} for primary indicators. Aborting calculation."
+            )
+            return None
         
-        # Calculate EMAs using pandas_ta
-        df['ema_short'] = ta.ema(df['close'], length=self.settings['ema_short'])
-        df['ema_long'] = ta.ema(df['close'], length=self.settings['ema_long'])
-        
-        # Calculate Bollinger Bands using pandas_ta
-        bb = ta.bbands(df['close'], length=self.settings['bb_period'], std=self.settings['bb_std'])
-        df['bb_upper'] = bb['BBU_' + str(self.settings['bb_period']) + '_' + str(self.settings['bb_std'])]
-        df['bb_middle'] = bb['BBM_' + str(self.settings['bb_period']) + '_' + str(self.settings['bb_std'])]
-        df['bb_lower'] = bb['BBL_' + str(self.settings['bb_period']) + '_' + str(self.settings['bb_std'])]
-        
-        # Determine candle color (green/red)
-        df['candle_color'] = np.where(df['close'] >= df['open'], 'green', 'red')
-        
-        # Calculate candle size
-        df['candle_size'] = abs(df['close'] - df['open'])
-        df['candle_size_pct'] = df['candle_size'] / df['open'] * 100
-        
-        # Get the latest data
-        latest = df.iloc[-1].copy()
-        previous = df.iloc[-2].copy() if len(df) > 1 else None
-        
+        # --- Persiapan Kolom dan Kalkulasi Indikator ---
+        try:
+            # Pastikan kolom OHLCV ada dan bertipe numerik
+            ohlcv_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in ohlcv_cols:
+                if col not in df.columns:
+                    logger.error(f"[{symbol}@{timeframe}] DataFrame missing required column: '{col}'.")
+                    return None
+                # Konversi ke float jika belum (get_klines idealnya sudah melakukan ini)
+                if not pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                # Jika setelah konversi masih ada NaN di kolom penting seperti 'close', ini masalah
+                if col == 'close' and df[col].isnull().any():
+                    logger.error(f"[{symbol}@{timeframe}] 'close' column contains NaN values after numeric conversion. Cannot proceed.")
+                    return None
+            
+            # Hapus baris dengan NaN di 'close' jika ada, sebelum kalkulasi TA
+            # Ini penting karena TA lib tidak suka NaN di input utama
+            df.dropna(subset=['close'], inplace=True)
+            if len(df) < required_initial_candles: # Cek lagi setelah dropna
+                logger.error(f"[{symbol}@{timeframe}] Insufficient data after dropping NaN 'close' values. Got {len(df)}, needed {required_initial_candles}.")
+                return None
+
+            # 1. RSI (Relative Strength Index)
+            rsi_len = self.settings.get('rsi_period', 14)
+            df['rsi'] = ta.rsi(close=df['close'], length=rsi_len)
+            
+            # 2. EMAs (Exponential Moving Averages)
+            ema_s_len = self.settings.get('ema_short', 20)
+            ema_l_len = self.settings.get('ema_long', 50)
+            df['ema_short'] = ta.ema(close=df['close'], length=ema_s_len)
+            df['ema_long'] = ta.ema(close=df['close'], length=ema_l_len)
+            
+            # 3. Bollinger Bands
+            bb_len = self.settings.get('bb_period', 20)
+            bb_std = self.settings.get('bb_std', 2.0)
+            bbands_df = ta.bbands(close=df['close'], length=bb_len, std=bb_std)
+            
+            if bbands_df is not None and not bbands_df.empty:
+                # Nama kolom output pandas-ta bisa bervariasi sedikit, pastikan formatnya benar
+                # Umumnya: BBL_{length}_{stddev}, BBM_{length}_{stddev}, BBU_{length}_{stddev}
+                # Untuk stddev float, pandas-ta mungkin menggunakan format seperti '2.0' atau '2'
+                # Kita coba beberapa format umum jika yang pertama gagal
+                bb_std_str = f"{bb_std:.1f}" # Misal "2.0"
+                bb_l_col = f'BBL_{bb_len}_{bb_std_str}'
+                bb_m_col = f'BBM_{bb_len}_{bb_std_str}'
+                bb_u_col = f'BBU_{bb_len}_{bb_std_str}'
+
+                if bb_l_col not in bbands_df.columns: # Coba format std tanpa desimal jika .0
+                    bb_std_str_alt = str(int(bb_std)) if bb_std == int(bb_std) else bb_std_str
+                    bb_l_col = f'BBL_{bb_len}_{bb_std_str_alt}'
+                    bb_m_col = f'BBM_{bb_len}_{bb_std_str_alt}'
+                    bb_u_col = f'BBU_{bb_len}_{bb_std_str_alt}'
+                
+                if bb_l_col in bbands_df.columns:
+                    df['bb_lower'] = bbands_df[bb_l_col]
+                    df['bb_middle'] = bbands_df[bb_m_col]
+                    df['bb_upper'] = bbands_df[bb_u_col]
+                else:
+                    logger.warning(f"[{symbol}@{timeframe}] Could not find expected Bollinger Bands columns (e.g., {bb_l_col}). Setting BBs to NaN.")
+                    df['bb_lower'], df['bb_middle'], df['bb_upper'] = pd.NA, pd.NA, pd.NA
+            else:
+                logger.warning(f"[{symbol}@{timeframe}] pandas_ta.bbands returned None or empty. Setting BBs to NaN.")
+                df['bb_lower'], df['bb_middle'], df['bb_upper'] = pd.NA, pd.NA, pd.NA
+            
+            # 4. Candle Color
+            df['candle_color'] = np.where(df['close'] >= df['open'], 'green', 'red')
+            
+            # 5. Candle Size Percentage
+            # Hindari pembagian dengan nol jika 'open' bisa 0 atau NaN
+            df['candle_size_pct'] = ((df['close'] - df['open']).abs() / df['open'].replace(0, np.nan) * 100).fillna(0.0)
+            
+            # --- Ekstrak Baris Data Terakhir ---
+            if df.empty: # Cek lagi jika df menjadi kosong karena error di atas
+                logger.error(f"[{symbol}@{timeframe}] DataFrame is empty before selecting the latest row after TA calculations.")
+                return None
+                
+            latest_indicators_row = df.iloc[-1].copy() # Baris terakhir untuk sinyal saat ini
+            previous_indicators_row = df.iloc[-2].copy() if len(df) > 1 else None # Baris sebelumnya
+
+            # --- Validasi Akhir untuk NaN di Indikator Kritis pada Baris Terakhir ---
+            # Indikator ini harus ada nilainya (bukan NaN) untuk menghasilkan sinyal yang valid
+            critical_ta_cols_for_signal = ['rsi', 'ema_short', 'ema_long', 'bb_middle']
+            nan_in_critical = latest_indicators_row[critical_ta_cols_for_signal].isnull().any()
+
+            if nan_in_critical:
+                rsi_val_str = f"{latest_indicators_row['rsi']:.2f}" if pd.notna(latest_indicators_row['rsi']) else "NaN"
+                ema_s_val_str = f"{latest_indicators_row['ema_short']:.4f}" if pd.notna(latest_indicators_row['ema_short']) else "NaN"
+                ema_l_val_str = f"{latest_indicators_row['ema_long']:.4f}" if pd.notna(latest_indicators_row['ema_long']) else "NaN"
+                bb_m_val_str = f"{latest_indicators_row['bb_middle']:.4f}" if pd.notna(latest_indicators_row['bb_middle']) else "NaN"
+                
+                logger.warning(
+                    f"[{symbol}@{timeframe}] Latest indicator row contains NaN in critical TA values: "
+                    f"RSI: {rsi_val_str}, EMA_S: {ema_s_val_str}, EMA_L: {ema_l_val_str}, BB_M: {bb_m_val_str}. "
+                    "Cannot generate a reliable signal."
+                )
+                return None # Jika ada NaN di indikator penting, jangan hasilkan sinyal
+
+        except KeyError as e_key:
+            logger.error(f"[{symbol}@{timeframe}] KeyError during indicator calculation. Missing column or wrong TA lib output format for '{e_key}'.", exc_info=True)
+            return None
+        except Exception as e_calc: # Tangkap error umum lainnya selama kalkulasi
+            logger.error(f"[{symbol}@{timeframe}] Unexpected error during indicator calculation: {e_calc}", exc_info=True)
+            return None
+            
+        # Jika semua berhasil, kembalikan dictionary hasil
         return {
             'symbol': symbol,
-            'timestamp': latest['timestamp'],
-            'close': latest['close'],
-            'rsi': latest['rsi'],
-            'ema_short': latest['ema_short'],
-            'ema_long': latest['ema_long'],
-            'bb_upper': latest['bb_upper'],
-            'bb_middle': latest['bb_middle'],
-            'bb_lower': latest['bb_lower'],
-            'candle_color': latest['candle_color'],
-            'candle_size_pct': latest['candle_size_pct'],
-            'previous': previous,
-            'df': df  # Include full dataframe for additional analysis if needed
+            'timestamp': latest_indicators_row['timestamp'], # Seharusnya pd.Timestamp dari get_klines
+            'close': latest_indicators_row['close'],
+            'rsi': latest_indicators_row['rsi'],
+            'ema_short': latest_indicators_row['ema_short'],
+            'ema_long': latest_indicators_row['ema_long'],
+            'bb_upper': latest_indicators_row['bb_upper'],
+            'bb_middle': latest_indicators_row['bb_middle'],
+            'bb_lower': latest_indicators_row['bb_lower'],
+            'candle_color': latest_indicators_row['candle_color'],
+            'candle_size_pct': latest_indicators_row['candle_size_pct'],
+            'previous': previous_indicators_row, # Bisa None jika hanya ada 1 baris data
+            # 'df': df # Opsional: Mengembalikan seluruh df bisa memakan banyak memori jika sering dipanggil.
+                      # Berguna untuk debugging, tapi mungkin tidak untuk produksi.
         }
-
+        
     def get_signal(self, symbol, timeframe=None):
         """Get trading signal based on technical indicators"""
+        if not timeframe:
+            timeframe = self.settings['candle_timeframe']
+        
         indicators = self.calculate_indicators(symbol, timeframe)
         if not indicators:
+            # calculate_indicators sudah melakukan logging, jadi tidak perlu log lagi di sini
             return None
             
         signal = {
             'symbol': symbol,
             'timestamp': indicators['timestamp'],
             'price': indicators['close'],
-            'action': 'WAIT',  # Default action
-            'strength': 0,     # Signal strength (0-100)
-            'reasons': []      # Reasons for the signal
+            'action': 'WAIT',
+            'strength': 0,
+            'reasons': []
         }
         
-        # RSI + Candle Color Strategy
-        if indicators['rsi'] < self.settings['rsi_oversold'] and indicators['candle_color'] == 'green':
+        # Defensive check for NaN values that might have slipped through calculate_indicators
+        # or if a calculation failed silently for a specific indicator not checked above.
+        if pd.isna(indicators['rsi']) or pd.isna(indicators['ema_short']) or \
+           pd.isna(indicators['ema_long']) or pd.isna(indicators['bb_upper']) or \
+           pd.isna(indicators['bb_lower']):
+            logger.warning(f"[{symbol}@{timeframe}] Critical indicator is NaN. RSI: {indicators['rsi']}, EMA_S: {indicators['ema_short']}, EMA_L: {indicators['ema_long']}, BB_U: {indicators['bb_upper']}, BB_L: {indicators['bb_lower']}. Skipping signal generation.")
+            signal['reasons'].append("Critical indicator is NaN")
+            return signal # Return WAIT signal
+
+        logger.debug(
+            f"[{symbol}@{timeframe}] Indicators Check: "
+            f"Close={indicators['close']:.4f}, RSI={indicators['rsi']:.2f}, "
+            f"EMA_S={indicators['ema_short']:.4f}, EMA_L={indicators['ema_long']:.4f}, "
+            f"BB_U={indicators['bb_upper']:.4f}, BB_L={indicators['bb_lower']:.4f}, "
+            f"Candle='{indicators['candle_color']}'"
+        )
+
+        # --- RSI + Candle Color Strategy ---
+        rsi_is_oversold = indicators['rsi'] < self.settings['rsi_oversold']
+        rsi_is_overbought = indicators['rsi'] > self.settings['rsi_overbought']
+        candle_is_green = indicators['candle_color'] == 'green'
+        candle_is_red = indicators['candle_color'] == 'red'
+
+        logger.debug(
+            f"[{symbol}@{timeframe}] RSI Conditions: "
+            f"Oversold={rsi_is_oversold} (RSI {indicators['rsi']:.2f} < {self.settings['rsi_oversold']}), "
+            f"Overbought={rsi_is_overbought} (RSI {indicators['rsi']:.2f} > {self.settings['rsi_overbought']}), "
+            f"GreenCandle={candle_is_green}, RedCandle={candle_is_red}"
+        )
+
+        if rsi_is_oversold and candle_is_green:
             signal['action'] = 'LONG'
             signal['strength'] += 30
-            signal['reasons'].append(f"RSI oversold ({indicators['rsi']:.2f}) with green candle")
-            
-        elif indicators['rsi'] > self.settings['rsi_overbought'] and indicators['candle_color'] == 'red':
+            signal['reasons'].append(f"RSI oversold ({indicators['rsi']:.2f}) & green candle")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: RSI LONG. Action: {signal['action']}, Strength: {signal['strength']}")
+        elif rsi_is_overbought and candle_is_red:
             signal['action'] = 'SHORT'
             signal['strength'] += 30
-            signal['reasons'].append(f"RSI overbought ({indicators['rsi']:.2f}) with red candle")
-            
-        # EMA Strategy
-        if indicators['close'] > indicators['ema_short'] > indicators['ema_long']:
-            # Price above short EMA, short EMA above long EMA = bullish
-            if signal['action'] == 'LONG':
+            signal['reasons'].append(f"RSI overbought ({indicators['rsi']:.2f}) & red candle")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: RSI SHORT. Action: {signal['action']}, Strength: {signal['strength']}")
+
+        # --- EMA Strategy ---
+        # Ensure EMAs are not NaN before comparison
+        ema_s_valid = not pd.isna(indicators['ema_short'])
+        ema_l_valid = not pd.isna(indicators['ema_long'])
+
+        ema_is_bullish = False
+        ema_is_bearish = False
+
+        if ema_s_valid and ema_l_valid:
+            ema_is_bullish = indicators['close'] > indicators['ema_short'] and indicators['ema_short'] > indicators['ema_long']
+            ema_is_bearish = indicators['close'] < indicators['ema_short'] and indicators['ema_short'] < indicators['ema_long']
+        
+        logger.debug(
+            f"[{symbol}@{timeframe}] EMA Conditions: ValidS={ema_s_valid}, ValidL={ema_l_valid}, "
+            f"Bullish={ema_is_bullish}, Bearish={ema_is_bearish}"
+        )
+
+        if ema_is_bullish:
+            if signal['action'] == 'LONG':  # Confirming
                 signal['strength'] += 20
-                signal['reasons'].append("EMA alignment confirms bullish trend")
-            elif signal['action'] == 'WAIT':
+                signal['reasons'].append("EMA bullish confirmation")
+            elif signal['action'] == 'WAIT':  # Primary
                 signal['action'] = 'LONG'
+                signal['strength'] += 20  # Base strength for EMA signal
+                signal['reasons'].append("EMA bullish crossover")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: EMA Bullish. Action: {signal['action']}, Strength: {signal['strength']}")
+        elif ema_is_bearish:
+            if signal['action'] == 'SHORT':  # Confirming
                 signal['strength'] += 20
-                signal['reasons'].append("EMA alignment suggests bullish trend")
-                
-        elif indicators['close'] < indicators['ema_short'] < indicators['ema_long']:
-            # Price below short EMA, short EMA below long EMA = bearish
-            if signal['action'] == 'SHORT':
-                signal['strength'] += 20
-                signal['reasons'].append("EMA alignment confirms bearish trend")
-            elif signal['action'] == 'WAIT':
+                signal['reasons'].append("EMA bearish confirmation")
+            elif signal['action'] == 'WAIT':  # Primary
                 signal['action'] = 'SHORT'
                 signal['strength'] += 20
-                signal['reasons'].append("EMA alignment suggests bearish trend")
-                
-        # Bollinger Band Breakout Strategy
-        if indicators['close'] > indicators['bb_upper']:
-            # Price above upper band = potential short (overbought)
-            if signal['action'] == 'SHORT':
+                signal['reasons'].append("EMA bearish crossover")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: EMA Bearish. Action: {signal['action']}, Strength: {signal['strength']}")
+
+        # --- Bollinger Bands Strategy ---
+        bb_u_valid = not pd.isna(indicators['bb_upper'])
+        bb_l_valid = not pd.isna(indicators['bb_lower'])
+
+        price_above_bb_upper = False
+        price_below_bb_lower = False
+
+        if bb_u_valid:
+            price_above_bb_upper = indicators['close'] > indicators['bb_upper']
+        if bb_l_valid:
+            price_below_bb_lower = indicators['close'] < indicators['bb_lower']
+
+        logger.debug(
+            f"[{symbol}@{timeframe}] BB Conditions: ValidU={bb_u_valid}, ValidL={bb_l_valid}, "
+            f"AboveUpper={price_above_bb_upper}, BelowLower={price_below_bb_lower}"
+        )
+
+        if price_above_bb_upper: # Potential SHORT reversal
+            if signal['action'] == 'SHORT': # Confirming
                 signal['strength'] += 20
-                signal['reasons'].append("Price above upper Bollinger Band")
-            elif signal['action'] == 'WAIT':
+                signal['reasons'].append("BB price above upper (confirms SHORT)")
+            elif signal['action'] == 'WAIT': # Primary
                 signal['action'] = 'SHORT'
                 signal['strength'] += 15
-                signal['reasons'].append("Price above upper Bollinger Band")
-                
-        elif indicators['close'] < indicators['bb_lower']:
-            # Price below lower band = potential long (oversold)
-            if signal['action'] == 'LONG':
+                signal['reasons'].append("BB price above upper (potential SHORT reversal)")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: BB Above Upper. Action: {signal['action']}, Strength: {signal['strength']}")
+        elif price_below_bb_lower: # Potential LONG reversal
+            if signal['action'] == 'LONG': # Confirming
                 signal['strength'] += 20
-                signal['reasons'].append("Price below lower Bollinger Band")
-            elif signal['action'] == 'WAIT':
+                signal['reasons'].append("BB price below lower (confirms LONG)")
+            elif signal['action'] == 'WAIT': # Primary
                 signal['action'] = 'LONG'
                 signal['strength'] += 15
-                signal['reasons'].append("Price below lower Bollinger Band")
-                
-        # If signal strength is too low, revert to WAIT
-        if signal['strength'] < 30:
+                signal['reasons'].append("BB price below lower (potential LONG reversal)")
+            logger.debug(f"[{symbol}@{timeframe}] Condition: BB Below Lower. Action: {signal['action']}, Strength: {signal['strength']}")
+
+        # --- Final Strength Check & Decision ---
+        signal_threshold = self.settings.get('signal_strength_threshold', 30) # Ambil dari settings jika ada, default 30
+        logger.debug(f"[{symbol}@{timeframe}] Pre-threshold Check: Action={signal['action']}, Strength={signal['strength']}, Threshold={signal_threshold}")
+
+        if signal['action'] != 'WAIT' and signal['strength'] < signal_threshold:
+            logger.info(
+                f"[{symbol}@{timeframe}] Strength {signal['strength']} < {signal_threshold}. "
+                f"Reverting Action '{signal['action']}' to 'WAIT'."
+            )
             signal['action'] = 'WAIT'
-            signal['reasons'] = ["Signal strength too low"]
+            signal['reasons'] = [f"Final strength {signal['strength']}/{signal_threshold} insufficient"] # Overwrite reasons
+            signal['strength'] = 0 # Reset strength jika di-revert
+        elif signal['action'] == 'WAIT' and not signal['reasons']: # Jika tetap WAIT dan tidak ada alasan spesifik
+             signal['reasons'].append(f"No strong signal found (strength {signal['strength']}/{signal_threshold})")
+
+
+        if signal['action'] != 'WAIT':
+            logger.warning(
+                f"[{symbol}@{timeframe}] <<< TRADE SIGNAL >>> "
+                f"Action: {signal['action']}, Strength: {signal['strength']}/{signal_threshold}, "
+                f"Price: {signal['price']:.4f}, Reasons: {'; '.join(signal['reasons'])}"
+            )
+        else:
+            logger.info(
+                f"[{symbol}@{timeframe}] Final Decision: "
+                f"Action: {signal['action']}, Strength: {signal['strength']}/{signal_threshold}, "
+                f"Price: {signal['price']:.4f}, Reasons: {'; '.join(signal['reasons'])}"
+            )
             
         return signal
-
 class TradingBot:
     def __init__(self, config, telegram_bot=None):
         self.config = config
@@ -694,6 +928,9 @@ class TradingBot:
         self.notification_thread = None
         self.binance_api = BinanceFuturesAPI(config) if config["api_key"] and config["api_secret"] else None
         self.technical_analysis = TechnicalAnalysis(self.binance_api) if self.binance_api else None
+        self.dynamic_pair_scanner_thread = None
+        self.currently_scanned_pairs = [] # Untuk menyimpan hasil scan terakhir (list of signal_data dicts)
+        self.active_trading_pairs_lock = threading.Lock() # Lock untuk akses aman ke self.config["trading_pairs"]
         
         # Initialize daily stats
         self.reset_daily_stats()
@@ -844,105 +1081,384 @@ class TradingBot:
         
         loop.close()
         logger.info("Notification queue processor thread stopped.")
-    def start_trading(self):
-        """Start the trading bot"""
-        if not self.running:
-            self.running = True
 
-            # Apply trading mode settings
-            self.apply_trading_mode_settings()
+# Di dalam class TradingBot:
+    def get_liquid_pairs_from_watchlist(self):
+        """
+        Fetches pairs from the dynamic_watchlist_symbols that meet minimum 24h volume criteria.
+        Returns a list of liquid symbol strings.
+        """
+        if not self.binance_api:
+            logger.warning("Binance API not available for liquidity check. Returning full watchlist.")
+            return self.config.get("dynamic_watchlist_symbols", [])
 
-            # Set up hedge mode if enabled
-            if self.config["hedge_mode"] and self.binance_api:
-                self.binance_api.change_position_mode(True)
+        watchlist = self.config.get("dynamic_watchlist_symbols", [])
+        min_volume_usdt = self.config.get("min_24h_volume_usdt_for_scan", 0)
+        liquid_pairs = []
 
-            # Start the signal check thread
-            self.signal_check_thread = threading.Thread(target=self.signal_check_loop)
-            self.signal_check_thread.daemon = True
-            self.signal_check_thread.start()
-            
-            # Start the notification processor thread
-            self.notification_thread = threading.Thread(target=self.process_notification_queue)
-            self.notification_thread.daemon = True
-            self.notification_thread.start()
+        if not watchlist:
+            logger.info("Dynamic watchlist is empty.")
+            return []
 
-            # Reset daily stats when starting trading
-            self.reset_daily_stats()
-            
-            # Send notification that bot has started
-            self.send_notification(
-                f"🚀 Trading Bot Started\n\n"
-                f"Mode: {self.config['trading_mode'].capitalize()}\n"
-                f"Leverage: {self.config['leverage']}x\n"
-                f"Take Profit: {self.config['take_profit']}%\n"
-                f"Stop Loss: {self.config['stop_loss']}%\n"
-                f"Position Size: {self.config['position_size_percentage']}% of balance\n"
-                f"Daily Profit Target: {self.config['daily_profit_target']}%\n"
-                f"Daily Loss Limit: {self.config['daily_loss_limit']}%\n"
-                f"Trading Pairs: {', '.join(self.config['trading_pairs'])}\n"
-                f"Real Trading: {'Enabled' if self.config['use_real_trading'] else 'Disabled (Simulation)'}"
-            )
+        try:
+            all_tickers_data = self.binance_api.get_ticker_24hr() # Fetches all symbols
+            if not all_tickers_data:
+                logger.error("Failed to fetch 24h ticker data for liquidity check.")
+                return watchlist # Fallback to full watchlist if API fails
 
-            return True
-        return False
+            tickers_map = {item['symbol']: item for item in all_tickers_data}
 
-    def stop_trading(self):
-        if not self.running:
-            logger.info("Trading bot is not running.")
-            return False # Not running
-            
-        logger.info("Stopping trading bot...")
-        self.running = False # Signal threads to stop
-
-        if self.signal_check_thread and self.signal_check_thread.is_alive():
-            try:
-                # No specific signal needed for signal_check_thread if it checks self.running
-                self.signal_check_thread.join(timeout=self.config["signal_check_interval"] + 2.0) # Wait for it to finish current iteration + buffer
-                if self.signal_check_thread.is_alive():
-                    logger.warning("Signal check thread did not terminate in time.")
-                else:
-                    logger.info("Signal check thread joined.")
-            except Exception as e:
-                logger.error(f"Error joining signal_check_thread: {e}")
-        
-        if self.notification_thread and self.notification_thread.is_alive():
-            try:
-                self.notification_queue.put((None, None)) # Send sentinel to notification queue
-                self.notification_thread.join(timeout=7.0) # Give a bit more time for final msgs + sentinel
-                if self.notification_thread.is_alive():
-                    logger.warning("Notification thread did not terminate in time.")
-                else:
-                    logger.info("Notification thread joined.")
-            except Exception as e:
-                logger.error(f"Error joining notification_thread: {e}")
-        
-        stop_message = "⏹️ <b>Trading Bot Stopped</b> ⏹️"
-        # We try to send a final notification. Since the notification thread might be stopped,
-        # this might not go through the queue as intended, but it's a best effort.
-        # A more robust way for this final message would be to send it synchronously
-        # before fully stopping the notification thread, or have the notification thread
-        # send it upon receiving the sentinel. For now, this is a simple attempt.
-        if self.telegram_bot and hasattr(self.telegram_bot, 'admin_chat_ids') and self.telegram_bot.admin_chat_ids:
-             # Directly try to send without queueing if thread is likely down
-            try:
-                loop = asyncio.get_event_loop() # Try to get existing loop or new one
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                for chat_id in self.telegram_bot.admin_chat_ids:
-                    coro = self.telegram_bot.application.bot.send_message(chat_id=chat_id, text=stop_message, parse_mode=constants.ParseMode.HTML)
-                    if loop.is_running():
-                         asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=5)
+            for symbol in watchlist:
+                ticker_info = tickers_map.get(symbol)
+                if ticker_info:
+                    # For futures, 'quoteVolume' is the volume in the quote asset (e.g., USDT)
+                    volume_24h_usdt = float(ticker_info.get('quoteVolume', 0))
+                    if volume_24h_usdt >= min_volume_usdt:
+                        liquid_pairs.append(symbol)
                     else:
-                         loop.run_until_complete(coro) # If loop isn't running, run it for this
+                        logger.debug(f"DynamicScan: {symbol} skipped, volume {volume_24h_usdt:.2f} USDT < {min_volume_usdt:.2f} USDT")
+                else:
+                    logger.debug(f"DynamicScan: No 24h ticker data found for {symbol} in watchlist.")
+            
+            logger.info(f"DynamicScan: Found {len(liquid_pairs)} liquid pairs for scanning: {liquid_pairs}")
+            return liquid_pairs
+            
+        except Exception as e:
+            logger.error(f"DynamicScan: Error during liquidity check: {e}", exc_info=True)
+            return watchlist # Fallback
+
+    def dynamic_pair_scan_loop(self):
+        """
+        Periodically scans watchlist pairs for trading signals and updates 
+        the active self.config["trading_pairs"] list.
+        """
+        logger.info("Dynamic Pair Scanner loop initiated.")
+        while self.running:
+            scan_successful = False
+            try:
+                if not self.config.get("dynamic_pair_selection", False):
+                    logger.debug("Dynamic pair selection is disabled. Scanner sleeping.")
+                    # Sleep for a bit even if disabled to check self.running periodically
+                    time.sleep(self.config.get("dynamic_scan_interval_seconds", 300) / 10) 
+                    continue
+
+                logger.info("DynamicScan: Starting new scan cycle...")
+                
+                potential_pairs = self.get_liquid_pairs_from_watchlist()
+                if not potential_pairs:
+                    logger.info("DynamicScan: No liquid pairs from watchlist to scan this cycle.")
+                    # Mark scan as "successful" in terms of not erroring, to ensure full sleep
+                    scan_successful = True 
+                    time.sleep(self.config.get("dynamic_scan_interval_seconds", 300))
+                    continue
+
+                candidate_signals = []
+                for symbol_to_scan in potential_pairs:
+                    if not self.running:  # Check if bot stopped during scan
+                        logger.info("DynamicScan: Bot stopping, aborting current scan.")
+                        return # Exit loop
+                    
+                    logger.debug(f"DynamicScan: Evaluating signal for candidate: {symbol_to_scan}")
+                    # Menggunakan timeframe default dari settings indikator
+                    signal_data = self.technical_analysis.get_signal(symbol_to_scan) 
+                    
+                    if signal_data and signal_data['action'] != 'WAIT' and \
+                       signal_data['strength'] >= self.config.get("signal_strength_threshold", 30):
+                        candidate_signals.append(signal_data)
+                        logger.info(
+                            f"DynamicScan: Strong signal for {symbol_to_scan} - "
+                            f"Action: {signal_data['action']}, Strength: {signal_data['strength']}"
+                        )
+                    # Jeda kecil antar API call untuk klines, terutama jika banyak pair
+                    time.sleep(self.config.get("api_call_delay_seconds", 0.5)) 
+
+
+                candidate_signals.sort(key=lambda x: x['strength'], reverse=True)
+                self.currently_scanned_pairs = candidate_signals # Store for potential display/debug
+
+                max_active = self.config.get("max_active_dynamic_pairs", 1)
+                # Ambil hanya simbol dari sinyal yang dipilih
+                new_dynamic_active_pairs = [s['symbol'] for s in candidate_signals[:max_active]]
+
+                with self.active_trading_pairs_lock:
+                    # Ambil daftar pair trading saat ini
+                    # Jika ada pair yang dihardcode dan tidak ingin di-overwrite, logika ini perlu disesuaikan
+                    # Saat ini, ini akan mengganti seluruh daftar `trading_pairs`
+                    current_trading_pairs = list(self.config.get("trading_pairs", []))
+                    
+                    if set(new_dynamic_active_pairs) != set(current_trading_pairs):
+                        self.config["trading_pairs"] = new_dynamic_active_pairs # Update daftar aktif
+                        logger.warning(
+                            f"DynamicScan: Active trading pairs UPDATED. "
+                            f"Old: {current_trading_pairs}, New: {self.config['trading_pairs']}"
+                        )
+                        self.send_notification(
+                            f"🔄 <b>Dynamic Trading Pairs Updated</b> 🔄\n\n"
+                            f"Now actively monitoring: {', '.join(self.config['trading_pairs']) if self.config['trading_pairs'] else 'None'}\n"
+                            f"(Scan found {len(candidate_signals)} candidates from {len(potential_pairs)} liquid pairs)"
+                        )
+                    else:
+                        logger.info(f"DynamicScan: No change to active trading pairs: {self.config['trading_pairs']}")
+                
+                scan_successful = True # Scan cycle completed successfully
+
             except Exception as e:
-                logger.error(f"Could not send final stop notification: {e}")
+                logger.error(f"DynamicScan: Error in dynamic_pair_scan_loop: {e}", exc_info=True)
+                # Jika error, tidur lebih singkat agar bisa coba lagi, tapi jangan 0
+                time.sleep(60) # Misal 1 menit jika ada error
+            
+            finally:
+                # Tidur sebelum scan berikutnya, hanya jika scan berhasil atau tidak ada error fatal
+                # Jika scan_successful adalah True, berarti loop berjalan normal
+                if scan_successful:
+                    interval = self.config.get("dynamic_scan_interval_seconds", 300)
+                    logger.debug(f"DynamicScan: Cycle complete. Sleeping for {interval} seconds.")
+                    # Tidur dengan cara yang bisa diinterupsi oleh self.running = False
+                    for _ in range(interval):
+                        if not self.running:
+                            break
+                        time.sleep(1)
+                # Jika scan_successful False, berarti ada exception, tidur singkat sudah dilakukan di blok except
 
+        logger.info("Dynamic Pair Scanner loop has stopped.")
+        
+# Di dalam class TradingBot:
 
-        logger.info("Trading bot stopped.")
+    def start_trading(self):
+        """Start the trading bot and its associated threads."""
+        if self.running:
+            logger.info("Trading bot is already running.")
+            return False # Bot sudah berjalan
+            
+        self.running = True # Set flag utama bahwa bot aktif
+        logger.info("Attempting to start trading bot...")
+        
+        # Terapkan pengaturan mode trading
+        self.apply_trading_mode_settings()
+
+        # Atur mode hedge jika diaktifkan dan API tersedia
+        if self.config.get("hedge_mode", False) and self.binance_api:
+            try:
+                logger.info("Attempting to set position mode to Hedge Mode.")
+                result = self.binance_api.change_position_mode(True) # True untuk Hedge Mode
+                if result and isinstance(result, dict) and result.get('code') == 200:
+                    logger.info(f"Successfully set position mode to Hedge Mode. Response: {result.get('msg', 'OK')}")
+                elif result and isinstance(result, dict) and "already" in result.get('msg', '').lower():
+                     logger.info(f"Position mode already set as Hedge Mode or no change needed: {result.get('msg')}")
+                else:
+                    logger.warning(f"Failed to confirm Hedge Mode setting or unexpected response: {result}")
+            except Exception as e:
+                logger.error(f"Error setting hedge mode: {e}", exc_info=True)
+
+        # Mulai thread untuk memeriksa sinyal trading pada pair yang aktif
+        self.signal_check_thread = threading.Thread(target=self.signal_check_loop)
+        self.signal_check_thread.daemon = True # Agar thread berhenti saat program utama berhenti
+        self.signal_check_thread.start()
+        logger.info("Signal check thread started.")
+        
+        # Mulai thread pemindai pair dinamis jika fitur diaktifkan
+        if self.config.get("dynamic_pair_selection", False):
+            self.dynamic_pair_scanner_thread = threading.Thread(target=self.dynamic_pair_scan_loop)
+            self.dynamic_pair_scanner_thread.daemon = True
+            self.dynamic_pair_scanner_thread.start()
+            logger.info("Dynamic Pair Scanner thread started.")
+
+        # Mulai thread untuk memproses antrian notifikasi
+        # Pastikan process_notification_queue sudah diadaptasi dari fixed_bot.py
+        self.notification_thread = threading.Thread(target=self.process_notification_queue)
+        self.notification_thread.daemon = True
+        self.notification_thread.start()
+        logger.info("Notification processor thread started.")
+
+        # Reset statistik harian saat memulai trading
+        self.reset_daily_stats()
+        
+        # Kirim notifikasi bahwa bot telah dimulai
+        # Gunakan HTML untuk format yang lebih baik
+        start_notification_message = (
+            f"🚀 <b>Trading Bot Started</b> 🚀\n\n"
+            f"<b>Mode:</b> {self.config.get('trading_mode', 'N/A').capitalize()}\n"
+            f"<b>Leverage:</b> {self.config.get('leverage', 0)}x\n"
+            f"<b>Take Profit:</b> {self.config.get('take_profit', 0.0)}%\n"
+            f"<b>Stop Loss:</b> {self.config.get('stop_loss', 0.0)}%\n"
+            f"<b>Position Size:</b> {self.config.get('position_size_percentage', 0.0)}% of balance\n"
+            f"<b>Daily Profit Target:</b> {self.config.get('daily_profit_target', 0.0)}%\n"
+            f"<b>Daily Loss Limit:</b> {self.config.get('daily_loss_limit', 0.0)}%\n"
+            # Tampilkan trading_pairs hanya jika dynamic selection OFF
+            f"<b>Trading Pairs:</b> {', '.join(self.config.get('trading_pairs', [])) if not self.config.get('dynamic_pair_selection', False) and self.config.get('trading_pairs', []) else ('Dynamic Selection Active' if self.config.get('dynamic_pair_selection', False) else 'None Configured')}\n"
+            f"<b>Dynamic Pair Selection:</b> {'✅ Enabled' if self.config.get('dynamic_pair_selection', False) else '❌ Disabled'}\n"
+            f"<b>Real Trading:</b> {'✅ Enabled' if self.config.get('use_real_trading', False) else '❌ Disabled (Simulation)'}"
+        )
+        self.send_notification(start_notification_message)        
+        
+        logger.info("Trading bot successfully started and all associated threads are running.")
         return True
 
+    def stop_trading(self):
+        """Gracefully stop the trading bot and its associated threads."""
+        if not self.running:
+            logger.info("Trading bot is not running or already in the process of stopping.")
+            return False # Bot tidak berjalan atau sudah dihentikan
+
+        logger.warning("Initiating trading bot stop sequence...")
+        self.running = False  # Flag utama untuk menghentikan semua loop di thread
+
+        # 1. Hentikan thread Dynamic Pair Scanner (jika berjalan)
+        # Ini harus dihentikan lebih dulu karena bisa mengubah daftar trading_pairs
+        if self.dynamic_pair_scanner_thread and self.dynamic_pair_scanner_thread.is_alive():
+            logger.info("Waiting for Dynamic Pair Scanner thread to join...")
+            try:
+                # Loop di dynamic_pair_scan_loop memeriksa self.running
+                self.dynamic_pair_scanner_thread.join(timeout=10.0) # Beri waktu yang cukup
+                if self.dynamic_pair_scanner_thread.is_alive():
+                    logger.warning("Dynamic Pair Scanner thread did not join in time.")
+                else:
+                    logger.info("Dynamic Pair Scanner thread joined successfully.")
+            except Exception as e:
+                logger.error(f"Error while joining Dynamic Pair Scanner thread: {e}", exc_info=True)
+        else:
+            logger.info("Dynamic Pair Scanner thread was not running or already joined.")
+
+        # 2. Hentikan thread Signal Check
+        if self.signal_check_thread and self.signal_check_thread.is_alive():
+            logger.info("Waiting for Signal Check thread to join...")
+            try:
+                # Loop di signal_check_loop memeriksa self.running
+                self.signal_check_thread.join(timeout=self.config.get("signal_check_interval", 30) + 5.0) # Timeout berdasarkan intervalnya + buffer
+                if self.signal_check_thread.is_alive():
+                    logger.warning("Signal Check thread did not join in time.")
+                else:
+                    logger.info("Signal Check thread joined successfully.")
+            except Exception as e:
+                logger.error(f"Error while joining Signal Check thread: {e}", exc_info=True)
+        else:
+            logger.info("Signal Check thread was not running or already joined.")
+
+        # 3. Kirim notifikasi "Bot Stopped" (jika memungkinkan)
+        # Ini dikirim sebelum menghentikan notification_thread agar ada kesempatan diproses
+        final_stop_message = "⏹️ <b>Trading Bot Stopped</b> ⏹️"
+        logger.info(f"Attempting to queue final stop notification: {final_stop_message}")
+        self.send_notification(final_stop_message) 
+        # Beri sedikit waktu agar pesan masuk antrian dan mungkin diproses
+        # Ini adalah upaya terbaik; jika notification_thread sudah bermasalah, mungkin tidak terkirim.
+        time.sleep(0.5) # Jeda singkat agar antrian notifikasi bisa diproses
+
+        # 4. Hentikan thread Notification Processor
+        if self.notification_thread and self.notification_thread.is_alive():
+            logger.info("Signalling Notification Processor thread to stop and waiting for it to join...")
+            try:
+                # Kirim sinyal 'None' untuk memberitahu thread agar berhenti (jika process_notification_queue mendukungnya)
+                # process_notification_queue juga harus memeriksa self.running
+                self.notification_queue.put((None, None), block=False) # Non-blocking, jika penuh tidak apa-apa
+            except queue.Full:
+                logger.warning("Notification queue was full when trying to put stop sentinel. Thread might be busy or stuck.")
+            
+            try:
+                self.notification_thread.join(timeout=15.0) # Beri waktu lebih lama untuk memproses sisa antrian + sentinel
+                if self.notification_thread.is_alive():
+                    logger.warning("Notification Processor thread did not join in time. Some final notifications might be lost.")
+                else:
+                    logger.info("Notification Processor thread joined successfully.")
+            except Exception as e:
+                logger.error(f"Error while joining Notification Processor thread: {e}", exc_info=True)
+        else:
+            logger.info("Notification Processor thread was not running or already joined.")
+
+        # Bersihkan antrian notifikasi untuk memastikan tidak ada yang tertinggal jika thread gagal join
+        # Meskipun idealnya thread yang sedang berjalan yang akan mengosongkannya.
+        if hasattr(self, 'notification_queue'): # Pastikan atribut ada
+            logger.debug("Clearing any remaining items in the notification queue...")
+            while not self.notification_queue.empty():
+                try:
+                    self.notification_queue.get_nowait()
+                    self.notification_queue.task_done()
+                except queue.Empty:
+                    break # Antrian sudah kosong
+            logger.debug("Notification queue cleared.")
+        
+        logger.warning("Trading bot stop sequence complete. Bot is now stopped.")
+        return True
+        
+    def signal_check_loop(self):
+        logger.info("Signal check loop (for active trading pairs) initiated.")
+        
+        while self.running:
+            try:
+                if not self.check_daily_limits():
+                    logger.info("Daily limits reached. Stopping trading from signal_check_loop.")
+                    self.stop_trading() # stop_trading akan handle self.running = False
+                    break # Keluar dari loop ini
+                
+                if DAILY_STATS["total_trades"] >= self.config.get("max_daily_trades", 10):
+                    logger.info(
+                        f"Max daily trades ({DAILY_STATS['total_trades']}/{self.config.get('max_daily_trades',10)}) reached. "
+                        "Stopping trading."
+                    )
+                    # Notifikasi dan stop sudah dihandle di dalam check_daily_limits jika diimplementasikan di sana
+                    # atau tambahkan notifikasi di sini jika perlu
+                    self.stop_trading()
+                    break
+                
+                active_pairs_this_iteration = []
+                with self.active_trading_pairs_lock:
+                    # Buat salinan dari daftar pair yang aktif untuk diiterasi
+                    # Ini penting karena daftar bisa diubah oleh dynamic_pair_scan_loop
+                    active_pairs_this_iteration = list(self.config.get("trading_pairs", []))
+
+                if not active_pairs_this_iteration:
+                    if not self.config.get("dynamic_pair_selection", False):
+                        logger.debug("SignalCheck: No trading pairs configured and dynamic selection is OFF. Idling.")
+                    else:
+                        logger.debug("SignalCheck: No active trading pairs currently (waiting for dynamic scanner). Idling.")
+                    # Tetap tidur sesuai interval utama, jangan spin CPU
+                    time.sleep(self.config.get("signal_check_interval", 30))
+                    continue
+
+                logger.debug(f"SignalCheck: Checking signals for active pairs: {active_pairs_this_iteration}")
+                for symbol_to_trade in active_pairs_this_iteration:
+                    if not self.running: # Cek lagi jika bot dihentikan di tengah iterasi pair
+                        logger.info("SignalCheck: Bot stopping, aborting current pair checks.")
+                        break 
+
+                    # Cek apakah sudah ada trade aktif untuk simbol ini
+                    has_active_trade_for_symbol = any(
+                        t['symbol'] == symbol_to_trade and not t.get('completed', False) for t in ACTIVE_TRADES
+                    )
+                    if has_active_trade_for_symbol:
+                        logger.debug(f"SignalCheck: Skipping {symbol_to_trade}, active trade exists.")
+                        continue
+                        
+                    logger.debug(f"SignalCheck: Evaluating signal for active pair: {symbol_to_trade}")
+                    signal = self.technical_analysis.get_signal(symbol_to_trade) # Timeframe default
+                    
+                    if signal and signal['action'] != 'WAIT': # Tidak perlu cek strength lagi, get_signal sudah handle
+                        logger.info(f"SignalCheck: Processing signal for {symbol_to_trade}: {signal['action']}")
+                        self.process_signal(signal) # Ini yang akan membuka posisi
+                        # Mungkin tambahkan jeda kecil setelah berhasil memproses sinyal & membuka trade
+                        time.sleep(self.config.get("post_trade_delay_seconds", 2)) 
+                    # Jeda antar pemeriksaan simbol jika diperlukan untuk rate limit API
+                    # time.sleep(self.config.get("api_call_delay_seconds", 0.2))
+
+
+                if not self.running: break # Cek setelah loop pair
+
+                logger.debug(f"SignalCheck: Cycle complete. Sleeping for {self.config.get('signal_check_interval', 30)}s.")
+                # Tidur dengan cara yang bisa diinterupsi
+                interval = self.config.get("signal_check_interval", 30)
+                for _ in range(interval):
+                    if not self.running:
+                        break
+                    time.sleep(1)
+                
+            except Exception as e:
+                logger.error(f"SignalCheck: Error in signal_check_loop: {e}", exc_info=True)
+                # Tidur lebih lama jika ada error, tapi tetap bisa diinterupsi
+                for _ in range(30): # Misal 30 detik
+                    if not self.running: break
+                    time.sleep(1)
+                    
+        logger.info("Signal check loop has stopped.")
+        
     def apply_trading_mode_settings(self):
         """Apply settings from the selected trading mode"""
         mode = self.config["trading_mode"]
@@ -1372,7 +1888,8 @@ class TelegramBotHandler:
         self.application.add_handler(CommandHandler("balance", self.balance_command))
         self.application.add_handler(CommandHandler("positions", self.positions_command))
         self.application.add_handler(CommandHandler("indicators", self.indicators_command))
-
+        self.application.add_handler(CommandHandler("scannedpairs", self.scanned_pairs_command))
+        
         # Trading commands
         self.application.add_handler(CommandHandler("starttrade", self.start_trading_command))
         self.application.add_handler(CommandHandler("stoptrade", self.stop_trading_command))
@@ -1448,126 +1965,213 @@ class TelegramBotHandler:
         )
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle the /help command"""
         if not await self.is_authorized(update):
             return
 
         help_text = (
-            "Available commands:\n\n"
-            "/start - Start the bot\n"
-            "/help - Show this help message\n"
-            "/status - Show current bot status\n"
-            "/config - Show current configuration\n"
-            "/set [param] [value] - Set configuration parameter\n"
-            "/trades - Show recent trades\n"
-            "/stats - Show daily trading statistics\n"
-            "/balance - Show your Binance account balance\n"
-            "/positions - Show open positions\n"
-            "/indicators [symbol] - Show technical indicators for a symbol\n\n"
-            "Trading Commands:\n"
-            "/starttrade - Start trading\n"
-            "/stoptrade - Stop trading\n"
-            "/closeall - Close all open positions\n\n"
-            "Settings Commands:\n"
-            "/setleverage [value] - Set leverage (e.g., /setleverage 10)\n"
-            "/setmode [mode] - Set trading mode (safe, standard, aggressive)\n"
-            "/addpair [symbol] - Add trading pair (e.g., /addpair BTCUSDT)\n"
-            "/removepair [symbol] - Remove trading pair\n"
-            "/setprofit [target] [limit] - Set daily profit target and loss limit\n\n"
-            "Real Trading Commands:\n"
-            "/enablereal - Enable real trading with Binance API\n"
-            "/disablereal - Disable real trading (simulation only)\n"
-            "/toggletestnet - Switch between Binance Testnet and Production\n"
-            "/testapi - Test your Binance API connection\n"
+            "<b>Available commands:</b>\n\n"
+            "<u>Core Commands:</u>\n"
+            "  /start - Start the bot & show main menu\n"
+            "  /help - Show this help message\n"
+            "  /status - Show current bot status\n"
+            "  /config - Show current configuration\n"
+            "  /set <code>[param] [value]</code> - Set general config parameter\n"
+            "  /trades - Show recent trades\n"
+            "  /stats - Show daily trading statistics\n"
+            "  /balance - Show your Binance account balance\n"
+            "  /positions - Show open positions\n"
+            "  /indicators <code>[SYMBOL]</code> - Show indicators for a symbol\n\n"
+            "<u>Trading Control:</u>\n"
+            "  /starttrade - Start trading (will prompt for mode)\n"
+            "  /stoptrade - Stop trading\n"
+            "  /closeall - Close all open positions (if any)\n\n"
+            "<u>Trading Settings:</u>\n"
+            "  /setleverage <code>[value]</code> - Set leverage (e.g., 10)\n"
+            "  /setmode <code>[mode]</code> - Set trading mode (safe, standard, aggressive)\n"
+            "  /setprofit <code>[target%] [limit%]</code> - Set daily profit target & loss limit\n\n"
+            "<u>Dynamic Pair Selection (if enabled via /toggledynamic):</u>\n"
+            "  /toggledynamic - Enable/Disable dynamic pair selection\n"
+            "  /watchlist <code>[add/remove/list] [SYMBOL]</code> - Manage dynamic watchlist\n"
+            "  /setdynamicpairs <code>[count]</code> - Set max active dynamic pairs\n"
+            "  /setminvolume <code>[USDT_volume]</code> - Set min 24h USDT volume for scan\n"
+            "  /setscaninterval <code>[seconds]</code> - Set dynamic scan interval\n"
+            "  /scannedpairs - Show last scanned dynamic pair candidates\n\n"
+            "<u>API & Real Trading:</u>\n"
+            "  /enablereal - Enable REAL trading (use with caution!)\n"
+            "  /disablereal - Disable real trading (simulation mode)\n"
+            "  /toggletestnet - Switch between Binance Testnet & Production API\n"
+            "  /testapi - Test your Binance API connection\n\n"
+            "<i>Use parameters without brackets. E.g., /setleverage 10</i>"
         )
-        await update.message.reply_text(help_text)
+        await update.message.reply_text(help_text, parse_mode=constants.ParseMode.HTML)    
+    
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.is_authorized(update):
             return
 
-        message_object_to_interact_with = update.callback_query.message if update.callback_query else update.message
+        # Tentukan objek pesan yang akan di-reply atau diedit
+        message_object_to_interact_with = None
+        if update.callback_query:
+            message_object_to_interact_with = update.callback_query.message
+        elif update.message:
+            message_object_to_interact_with = update.message
         
         if not message_object_to_interact_with:
             logger.error("status_command: Could not determine message object from update.")
+            # Jika chat ada, coba kirim pesan error ke chat tersebut
             if update.effective_chat:
-                await update.effective_chat.send_text("Error: Could not process status request.")
+                try:
+                    await update.effective_chat.send_message("Error: Could not process status request due to missing message context.")
+                except Exception as e_send:
+                    logger.error(f"status_command: Failed to send error message to chat: {e_send}")
+            return
+            
+        if not self.trading_bot: # Periksa apakah trading_bot sudah di-set
+            logger.warning("status_command: self.trading_bot is not initialized.")
+            try:
+                await message_object_to_interact_with.reply_text("Trading bot is not initialized. Please check bot setup.")
+            except Exception as e_reply:
+                 logger.error(f"status_command: Failed to reply when trading_bot is None: {e_reply}")
             return
 
-        if not self.trading_bot:
-            await message_object_to_interact_with.reply_text("Trading bot not initialized.")
-            return
+        # --- Akses konfigurasi melalui self.trading_bot.config ---
+        bot_config = self.trading_bot.config # Buat referensi singkat
 
+        dynamic_selection_status = "❌ Disabled"
+        active_dynamic_pairs_text = ""
+        # Gunakan bot_config untuk mengakses setting dynamic_pair_selection
+        if bot_config.get("dynamic_pair_selection", False):
+            dynamic_selection_status = "✅ Enabled"
+            # Akses aman ke daftar pair yang mungkin diubah oleh thread lain
+            with self.trading_bot.active_trading_pairs_lock:
+                 active_pairs = bot_config.get("trading_pairs", []) # Ambil dari bot_config
+            active_dynamic_pairs_text = f"\n  Active Dynamic Pairs: {', '.join(active_pairs) if active_pairs else 'None selected yet'}"
+            
         active_trades = [t for t in ACTIVE_TRADES if not t.get('completed', False)]
-        completed_trades = COMPLETED_TRADES
+        completed_trades = COMPLETED_TRADES # Ini adalah variabel global, pastikan konsisten
 
-        total_profit_pct = 0
+        total_profit_pct_leveraged = 0.0 # Ganti nama agar lebih jelas
         win_count = 0
         loss_count = 0
         total_profit_usdt = 0.0
 
         for trade in completed_trades:
-            result = trade.get('leveraged_profit_pct', 0)
-            total_profit_pct += result
-            if result > 0:
-                win_count += 1
-            else:
-                loss_count += 1
-            total_profit_usdt += trade.get('profit_usdt', 0.0)
+            # Gunakan profit USDT untuk menentukan win/loss agar lebih akurat
+            profit_this_trade_usdt = trade.get('profit_usdt', 0.0)
+            total_profit_usdt += profit_this_trade_usdt
+            
+            # Akumulasi leveraged profit percentage jika ada
+            total_profit_pct_leveraged += trade.get('leveraged_profit_pct', 0.0)
 
-        win_rate = (win_count / len(completed_trades) * 100) if completed_trades else 0
-        real_trading_status = "✅ Enabled" if self.trading_bot.config["use_real_trading"] else "❌ Disabled (Simulation)"
+            if profit_this_trade_usdt > 0: # Menang jika profit USDT > 0
+                win_count += 1
+            elif profit_this_trade_usdt < 0: # Kalah jika profit USDT < 0 (abaikan jika 0)
+                loss_count += 1
+        
+        # Hitung win rate berdasarkan trade yang menghasilkan profit atau loss
+        actual_trades_for_win_rate = win_count + loss_count
+        win_rate = (win_count / actual_trades_for_win_rate * 100) if actual_trades_for_win_rate > 0 else 0.0
+        
+        real_trading_status = "✅ Enabled" if bot_config.get("use_real_trading", False) else "❌ Disabled (Simulation)"
 
         status_text = (
             f"📊 <b>BOT STATUS</b> 📊\n\n"
             f"<b>Trading:</b> {'✅ Running' if self.trading_bot.running else '❌ Stopped'}\n"
-            f"<b>Mode:</b> {self.trading_bot.config['trading_mode'].capitalize()}\n"
-            f"<b>Leverage:</b> {self.trading_bot.config['leverage']}x\n"
-            f"<b>Take Profit:</b> {self.trading_bot.config['take_profit']}%\n"
-            f"<b>Stop Loss:</b> {self.trading_bot.config['stop_loss']}%\n\n"
+            f"<b>Mode:</b> {bot_config.get('trading_mode', 'N/A').capitalize()}\n"
+            f"<b>Leverage:</b> {bot_config.get('leverage', 0)}x\n"
+            f"<b>Take Profit:</b> {bot_config.get('take_profit', 0.0)}%\n"
+            f"<b>Stop Loss:</b> {bot_config.get('stop_loss', 0.0)}%\n\n"
             f"<b>Real Trading:</b> {real_trading_status}\n"
             f"<b>Active Trades:</b> {len(active_trades)}\n"
-            f"<b>Completed Trades:</b> {len(completed_trades)}\n"
-            f"<b>Total Profit %:</b> {total_profit_pct:.2f}%\n"
-            f"<b>Total Profit USDT:</b> ${total_profit_usdt:.2f}\n"
-            f"<b>Win Rate:</b> {win_rate:.1f}% ({win_count}/{len(completed_trades)})\n\n"
-            f"<b>Trading Pairs:</b> {', '.join(self.trading_bot.config['trading_pairs'])}\n"
-            f"<b>Daily Profit Target:</b> {self.trading_bot.config['daily_profit_target']}%\n"
-            f"<b>Daily Loss Limit:</b> {self.trading_bot.config['daily_loss_limit']}%"
+            f"<b>Completed Trades (Win/Loss/Total):</b> {win_count}/{loss_count}/{len(completed_trades)}\n"
+            f"<b>Total P/L (Leveraged %):</b> {total_profit_pct_leveraged:.2f}%\n" # Total dari leveraged_profit_pct
+            f"<b>Total P/L (USDT):</b> ${total_profit_usdt:.2f}\n"
+            f"<b>Win Rate:</b> {win_rate:.1f}% ({win_count}/{actual_trades_for_win_rate})\n\n"
+            f"<u>Dynamic Pair Selection:</u>\n"
+            f"  <b>Status:</b> {dynamic_selection_status}"
+            f"{active_dynamic_pairs_text}\n"
+            f"  Watchlist Size: {len(bot_config.get('dynamic_watchlist_symbols',[]))}\n"
+            f"  Max Active Dynamic: {bot_config.get('max_active_dynamic_pairs',0)}\n\n"
+            f"<b>Currently Monitored Pairs:</b> {', '.join(bot_config.get('trading_pairs', ['N/A']))}\n" # Pair yang benar-benar dipantau
+            f"<b>Daily Profit Target:</b> {bot_config.get('daily_profit_target', 0.0)}%\n"
+            f"<b>Daily Loss Limit:</b> {bot_config.get('daily_loss_limit', 0.0)}%"
         )
 
         keyboard = [
             [InlineKeyboardButton("🔄 Start Trading", callback_data="select_trading_mode"),
              InlineKeyboardButton("⏹️ Stop Trading", callback_data="stop_trading")],
-            [InlineKeyboardButton("📊 Statistics", callback_data="stats"),
-             InlineKeyboardButton("📈 Positions", callback_data="positions")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="config"),
-             InlineKeyboardButton(f"{'🔴 Disable' if self.trading_bot.config['use_real_trading'] else '🟢 Enable'} Real Trading",
+            [InlineKeyboardButton("📊 Daily Stats", callback_data="stats"), # Ganti nama tombol jika ini lebih cocok
+             InlineKeyboardButton("📈 Open Positions", callback_data="positions")],
+            [InlineKeyboardButton("⚙️ Bot Settings", callback_data="config"),
+             InlineKeyboardButton(f"{'🔴 Disable' if bot_config.get('use_real_trading', False) else '🟢 Enable'} Real Trading",
                                  callback_data="toggle_real_trading")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        if update.callback_query:
-            try:
+        try:
+            if update.callback_query: # Jika ini adalah callback dari tombol
                 await update.callback_query.edit_message_text(
-                    status_text,
+                    text=status_text,
                     reply_markup=reply_markup,
                     parse_mode=constants.ParseMode.HTML
                 )
-            except Exception as e:
-                logger.warning(f"Failed to edit message in status_command (callback): {e}. Sending new message.")
+            else: # Jika ini adalah command /status biasa
                 await message_object_to_interact_with.reply_text(
-                    status_text,
+                    text=status_text,
                     reply_markup=reply_markup,
                     parse_mode=constants.ParseMode.HTML
                 )
-        else:
-            await message_object_to_interact_with.reply_text(
-                status_text,
-                reply_markup=reply_markup,
-                parse_mode=constants.ParseMode.HTML
+        except Exception as e:
+            logger.error(f"status_command: Failed to send/edit status message: {e}", exc_info=True)
+            # Fallback jika edit gagal (misal, pesan terlalu tua atau tidak berubah)
+            if update.callback_query: # Hanya coba kirim baru jika edit gagal pada callback
+                try:
+                    await message_object_to_interact_with.reply_text( # Seharusnya .send_message jika mau baru
+                        text=status_text,
+                        reply_markup=reply_markup,
+                        parse_mode=constants.ParseMode.HTML
+                    )
+                except Exception as e_fallback:
+                    logger.error(f"status_command: Fallback reply_text also failed: {e_fallback}")
+    
+    async def scanned_pairs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.is_authorized(update):
+            return
+        if not self.trading_bot:
+            await update.message.reply_text("Trading bot not initialized.")
+            return
+        
+        if not self.trading_bot.config.get("dynamic_pair_selection", False):
+            await update.message.reply_text(
+                "Dynamic pair selection is currently disabled.\n"
+                "Enable it via config or a command (e.g., /toggledynamic)."
             )
+            return
 
+        scanned_info = "🔎 <b>Last Scanned Dynamic Pair Candidates</b> 🔍\n\n"
+        if not self.trading_bot.currently_scanned_pairs: # Atribut ini harus diisi oleh dynamic_pair_scan_loop
+            scanned_info += "No strong signals found in the last scan, or scan has not run yet / found no candidates."
+        else:
+            # Tampilkan beberapa kandidat teratas saja agar pesan tidak terlalu panjang
+            display_limit = 10 
+            for i, signal_data in enumerate(self.trading_bot.currently_scanned_pairs[:display_limit]):
+                scanned_info += (
+                    f"<b>{i+1}. {signal_data['symbol']}</b>:\n"
+                    f"  Action: <i>{signal_data['action']}</i>, Strength: {signal_data['strength']}\n"
+                    f"  Price: ${signal_data['price']:.4f}\n"
+                    f"  Reasons: {'; '.join(signal_data.get('reasons', ['N/A']))}\n\n"
+                )
+            if len(self.trading_bot.currently_scanned_pairs) > display_limit:
+                scanned_info += f"... and {len(self.trading_bot.currently_scanned_pairs) - display_limit} more candidates.\n"
+        
+        scanned_info += f"\nCurrently active trading pairs: {', '.join(self.trading_bot.config.get('trading_pairs',[])) if self.trading_bot.config.get('trading_pairs',[]) else 'None'}"
+            
+        # Batasi panjang pesan
+        if len(scanned_info) > constants.MessageLimit.TEXT_LENGTH: # Gunakan konstanta dari PTB
+            scanned_info = scanned_info[:constants.MessageLimit.TEXT_LENGTH - 20] + "\n... (message truncated)"
+            
+        await update.message.reply_text(scanned_info, parse_mode=constants.ParseMode.HTML)
     async def config_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.is_authorized(update):
             return
