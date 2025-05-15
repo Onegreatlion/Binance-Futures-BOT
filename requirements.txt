@@ -1,0 +1,5 @@
+requests
+numpy
+pandas
+pandas_ta
+python-telegram-bot>=20.0
