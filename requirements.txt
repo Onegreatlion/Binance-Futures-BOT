@@ -3,5 +3,6 @@ pandas
 pandas-ta
 requests
 httpx
-setuptools
 google-generativeai
+setuptools
+numpy<1.26
