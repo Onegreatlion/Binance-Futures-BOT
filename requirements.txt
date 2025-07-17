@@ -4,5 +4,5 @@ pandas-ta
 requests
 httpx
 google-generativeai
-setuptools
+setuptools<81
 numpy<1.26
